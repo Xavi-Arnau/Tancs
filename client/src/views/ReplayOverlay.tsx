@@ -69,6 +69,7 @@ export default function ReplayOverlay({ game, turns, mySlot, onDone }: Props) {
   const [steps] = useState(() => reconstructSteps(game, turns));
   const [index, setIndex] = useState(0);
   const [activeShot, setActiveShot] = useState<ActiveShot | null>(null);
+  const [continuing, setContinuing] = useState(false);
 
   const caughtUp = index >= steps.length;
 
@@ -103,7 +104,15 @@ export default function ReplayOverlay({ game, turns, mySlot, onDone }: Props) {
             </span>
           ))}
         </div>
-        <Button onClick={onDone}>Continue</Button>
+        <Button
+          disabled={continuing}
+          onClick={() => {
+            setContinuing(true);
+            onDone();
+          }}
+        >
+          {continuing ? "Continuing..." : "Continue"}
+        </Button>
       </div>
     );
   }
