@@ -1,0 +1,24 @@
+{
+  "name": "tancs",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "workspaces": [
+    "client",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "npm run build --workspace=shared && netlify dev",
+    "build": "npm run build --workspace=shared && npm run build --workspace=client"
+  },
+  "dependencies": {
+    "@tancs/shared": "*",
+    "mongodb": "^6.10.0"
+  },
+  "devDependencies": {
+    "@netlify/functions": "^3.0.0",
+    "@types/node": "^22.7.5",
+    "netlify-cli": "^17.34.3",
+    "typescript": "^5.6.2"
+  }
+}
