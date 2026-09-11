@@ -16,7 +16,7 @@ export function generateTerrain(
 
   const points = new Array<number>(size);
   const baseHeight = BOARD_HEIGHT * 0.4;
-  const roughness = BOARD_HEIGHT * 0.3;
+  const roughness = BOARD_HEIGHT * 0.5;
 
   points[0] = baseHeight + (rng() - 0.5) * roughness;
   points[size - 1] = baseHeight + (rng() - 0.5) * roughness;

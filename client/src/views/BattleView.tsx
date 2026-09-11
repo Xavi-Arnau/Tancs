@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
+import { buildShotAnimation } from "@/game/shotAnimation";
 import TerrainCanvas, { type ActiveShot } from "@/game/TerrainCanvas";
 import { getWeaponIcon } from "@/game/weaponIcons";
 import { getLastShot, saveLastShot } from "@/identity/lastShotSettings";
@@ -16,9 +17,10 @@ interface Props {
   token: string;
   mySlot: 0 | 1;
   markSeen: (turnNumber: number) => void;
+  onAnimatingChange: (animating: boolean) => void;
 }
 
-export default function BattleView({ game, gameId, token, mySlot, markSeen }: Props) {
+export default function BattleView({ game, gameId, token, mySlot, markSeen, onAnimatingChange }: Props) {
   const queryClient = useQueryClient();
   const me = game.players[mySlot];
   const opponent = game.players[mySlot === 0 ? 1 : 0];
@@ -47,20 +49,18 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen }: Pr
       // to ReplayOverlay, playing the same shot we're about to animate a second time.
       markSeen(res.turn.turnNumber);
       saveLastShot(gameId, { weaponId, angle, power });
+      onAnimatingChange(true);
+      const { projectiles, damagePopups } = buildShotAnimation(game.players, res.turn.resolution);
       setActiveShot({
         preImpactTerrain: game.terrain,
-        projectiles: res.turn.resolution.projectiles.map((p) => ({
-          trajectory: p.trajectory,
-          tickCount: p.tickCount,
-          startTick: p.startTick,
-          impact: p.impact,
-          terrainDiff: p.terrainDiff,
-        })),
+        projectiles,
         actingSlot: mySlot,
         angle,
         projectileStyle: getWeapon(weaponId).projectileStyle,
+        damagePopups,
         onComplete: () => {
           setActiveShot(null);
+          onAnimatingChange(false);
           queryClient.invalidateQueries({ queryKey: ["gameState", gameId] });
         },
       });
@@ -88,6 +88,7 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen }: Pr
       <TerrainCanvas
         terrain={game.terrain}
         players={game.players}
+        hazards={game.hazards}
         aim={isMyTurn && !activeShot ? { slot: mySlot, angle } : null}
         activeShot={activeShot}
       />

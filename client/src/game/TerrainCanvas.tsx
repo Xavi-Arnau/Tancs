@@ -3,6 +3,7 @@ import {
   BOARD_HEIGHT,
   heightAt,
   TANK_WIDTH,
+  type HazardZone,
   type PlayerState,
   type Point,
   type Terrain,
@@ -13,6 +14,7 @@ import { useEffect, useRef } from "react";
 const PLAYER_COLORS: [string, string] = ["#e5484d", "#3b82f6"]; // slot 0 red, slot 1 blue
 const MS_PER_TICK = 1000 / 60; // real-time-ish playback speed, independent of the physics tick rate
 const BURST_FADE_MS = 350;
+const POPUP_DURATION_MS = 900;
 
 export interface ActiveShotProjectile {
   trajectory: Point[];
@@ -22,18 +24,27 @@ export interface ActiveShotProjectile {
   terrainDiff: TerrainDiffEntry[];
 }
 
+export interface DamagePopup {
+  slot: 0 | 1;
+  amount: number;
+  triggerTick: number;
+  source: "hazard" | "shot";
+}
+
 export interface ActiveShot {
   preImpactTerrain: Terrain;
   projectiles: ActiveShotProjectile[];
   actingSlot: 0 | 1;
   angle: number;
   projectileStyle?: string; // e.g. "flame" — one value for the whole shot, same weapon throughout
+  damagePopups?: DamagePopup[];
   onComplete: () => void;
 }
 
 interface Props {
   terrain: Terrain;
   players: PlayerState[];
+  hazards?: HazardZone[];
   aim?: { slot: 0 | 1; angle: number } | null;
   activeShot?: ActiveShot | null;
 }
@@ -65,6 +76,38 @@ function drawTerrain(ctx: CanvasRenderingContext2D, terrain: Terrain) {
   ctx.strokeStyle = "#3f7d3a";
   ctx.lineWidth = 3;
   ctx.stroke();
+}
+
+function drawHazards(
+  ctx: CanvasRenderingContext2D,
+  terrain: Terrain,
+  hazards: HazardZone[],
+  elapsedMs: number,
+) {
+  for (const zone of hazards) {
+    const startCol = Math.max(0, Math.min(terrain.width - 1, Math.round(zone.startX)));
+    const endCol = Math.max(0, Math.min(terrain.width - 1, Math.round(zone.endX)));
+    if (endCol <= startCol) continue;
+    const pulse = 0.55 + 0.25 * Math.sin(elapsedMs * 0.004 + zone.startX);
+
+    ctx.beginPath();
+    ctx.moveTo(startCol, toScreenY(terrain.heights[startCol]) + 5);
+    for (let x = startCol; x <= endCol; x++) {
+      ctx.lineTo(x, toScreenY(terrain.heights[x]));
+    }
+    ctx.lineTo(endCol, toScreenY(terrain.heights[endCol]) + 5);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(
+      0,
+      toScreenY(terrain.heights[startCol]),
+      0,
+      toScreenY(terrain.heights[startCol]) + 5,
+    );
+    grad.addColorStop(0, `rgba(255,150,30,${pulse})`);
+    grad.addColorStop(1, `rgba(170,30,10,${pulse * 0.8})`);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
 }
 
 function drawTank(
@@ -116,6 +159,26 @@ function drawTank(
   ctx.fillText(`${Math.max(0, Math.round(player.hp))} HP`, sx, sy + 16);
 }
 
+function drawDamagePopup(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  groundY: number,
+  amount: number,
+  progress: number,
+  source: "hazard" | "shot",
+) {
+  const alpha = 1 - progress;
+  const y = toScreenY(groundY + 26 + progress * 20);
+  const [r, g, b] = source === "hazard" ? [234, 88, 12] : [220, 38, 38]; // ember orange vs shot red
+  ctx.font = "bold 13px system-ui";
+  ctx.textAlign = "center";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+  ctx.strokeText(`-${amount}`, x, y);
+  ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+  ctx.fillText(`-${amount}`, x, y);
+}
+
 function pointAtProgress(trajectory: Point[], progress: number): Point {
   const idx = progress * (trajectory.length - 1);
   const lo = Math.floor(idx);
@@ -148,7 +211,7 @@ function terrainWithDiffs(base: Terrain, diffLists: TerrainDiffEntry[][]): Terra
   return { width: base.width, heights };
 }
 
-export default function TerrainCanvas({ terrain, players, aim, activeShot }: Props) {
+export default function TerrainCanvas({ terrain, players, hazards, aim, activeShot }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Latest props, readable from inside the animation loop without being its effect
@@ -157,9 +220,11 @@ export default function TerrainCanvas({ terrain, players, aim, activeShot }: Pro
   // (but equivalent) terrain/players object reference mid-flight.
   const terrainRef = useRef(terrain);
   const playersRef = useRef(players);
+  const hazardsRef = useRef(hazards);
   const aimRef = useRef(aim);
   terrainRef.current = terrain;
   playersRef.current = players;
+  hazardsRef.current = hazards;
   aimRef.current = aim;
 
   function renderScene(
@@ -187,6 +252,7 @@ export default function TerrainCanvas({ terrain, players, aim, activeShot }: Pro
     }
     const renderTerrain = shot ? terrainWithDiffs(shot.preImpactTerrain, landedDiffs) : terrainRef.current;
     drawTerrain(ctx, renderTerrain);
+    if (hazardsRef.current?.length) drawHazards(ctx, renderTerrain, hazardsRef.current, elapsedMs);
 
     for (const player of playersRef.current) {
       const isActingTank = shot?.actingSlot === player.slot;
@@ -248,6 +314,23 @@ export default function TerrainCanvas({ terrain, players, aim, activeShot }: Pro
           }
         }
       }
+
+      for (const popup of shot.damagePopups ?? []) {
+        if (elapsedTicks < popup.triggerTick) continue;
+        const msSinceTrigger = elapsedMs - popup.triggerTick * MS_PER_TICK;
+        if (msSinceTrigger >= POPUP_DURATION_MS) continue;
+        const player = playersRef.current.find((p) => p.slot === popup.slot);
+        if (!player) continue;
+        const groundY = heightAt(renderTerrain, player.tankX);
+        drawDamagePopup(
+          ctx,
+          player.tankX,
+          groundY,
+          popup.amount,
+          msSinceTrigger / POPUP_DURATION_MS,
+          popup.source,
+        );
+      }
     }
   }
 
@@ -264,7 +347,12 @@ export default function TerrainCanvas({ terrain, players, aim, activeShot }: Pro
       return;
     }
 
-    const maxEndTick = Math.max(...activeShot.projectiles.map((p) => p.startTick + p.tickCount));
+    const maxEndTick = Math.max(
+      ...activeShot.projectiles.map((p) => p.startTick + p.tickCount),
+      ...(activeShot.damagePopups ?? []).map(
+        (p) => p.triggerTick + POPUP_DURATION_MS / MS_PER_TICK,
+      ),
+    );
     let rafId: number;
     let startTime: number | null = null;
 
@@ -294,7 +382,7 @@ export default function TerrainCanvas({ terrain, players, aim, activeShot }: Pro
     if (!canvas || !ctx) return;
     renderScene(ctx, canvas, 0, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terrain, players, aim, activeShot]);
+  }, [terrain, players, hazards, aim, activeShot]);
 
   return (
     <canvas

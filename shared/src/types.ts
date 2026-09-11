@@ -1,4 +1,4 @@
-export type ProjectileType = "parabolic" | "split";
+export type ProjectileType = "parabolic" | "split" | "bounce";
 
 export interface SplitPatternPoint {
   dx: number; // target offset from the split point, board units
@@ -22,6 +22,11 @@ export interface WeaponDefinition {
   splitRevealTicks?: number; // ticks after the split when the pattern should be fully "revealed" (ignored by "drop" mode)
   splitMode?: "trajectory" | "drop"; // "trajectory" (default): solve a velocity to reach the pattern point, then keep flying. "drop": spawn directly at the pattern point at rest and fall straight down (wind ignored), so the whole pattern stays rigid while falling.
   projectileStyle?: "flame"; // client rendering hint for this weapon's projectiles; defaults to a plain shell look
+  // Only meaningful when projectile === "bounce":
+  maxBounces?: number; // how many times it skips off terrain before its final, real impact
+  // Persistent hazard this weapon leaves behind at its impact point, ticking damage each
+  // subsequent turn until it expires (see HazardZone):
+  hazard?: { damagePerTurn: number; turns: number };
 }
 
 export interface Point {
@@ -34,7 +39,7 @@ export interface InventoryEntry {
   quantity: number; // ignored (never decremented) for "infinite" ammo weapons
 }
 
-export type GameMode = "single_battle";
+export type GameMode = "single_battle" | "vs_cpu";
 
 export type GameStatus =
   | "waiting_for_player2"
@@ -59,6 +64,17 @@ export interface Terrain {
   heights: number[];
 }
 
+// A persistent, multi-turn hazard (e.g. Magma Strike's lava pool) — any tank whose column
+// falls within [startX, endX] takes damagePerTurn every turn until turnsRemaining hits 0.
+// A freshly created zone is NOT ticked the turn it's created (see combat.ts).
+export interface HazardZone {
+  id: string;
+  startX: number;
+  endX: number;
+  damagePerTurn: number;
+  turnsRemaining: number;
+}
+
 export interface GameDoc {
   _id: string;
   mode: GameMode;
@@ -72,6 +88,7 @@ export interface GameDoc {
   terrain: Terrain;
   players: PlayerState[]; // length 1 while waiting_for_player2, length 2 otherwise
   winnerPlayerId: string | null;
+  hazards: HazardZone[];
 }
 
 export interface TerrainDiffEntry {
@@ -115,6 +132,12 @@ export interface TurnResolution {
   // fragment. Order matters: it's the true server-side carve order, relied on when replaying.
   projectiles: ProjectileEvent[];
   tankFalls: TankFallEntry[];
+  // Damage from hazard zones that existed BEFORE this turn, ticked at its start (before the
+  // fired shot resolves) — independent of any projectile, since it isn't tied to an impact.
+  hazardDamage: DamageEntry[];
+  // The zone (if any) this turn's fired shot spawned — null if the weapon has no `hazard`
+  // config or its shot didn't impact. Not yet ticked; that starts next turn.
+  hazardZoneCreated: HazardZone | null;
   resultingGameStatus: GameStatus;
 }
 

@@ -1,6 +1,6 @@
 import type { SplitPatternPoint, WeaponDefinition } from "./types.js";
 
-const BASE_DAMAGE = 25;
+const BASE_DAMAGE = 40;
 
 /**
  * Samples the classic parametric heart curve into `count` points, scaled to board units.
@@ -55,7 +55,7 @@ export const WEAPONS: Record<string, WeaponDefinition> = {
     name: "Cluster Bomb",
     description: "Splits mid-air into 4 bomblets that scatter across the battlefield.",
     cost: 75,
-    damage: 15,
+    damage: 24,
     splashRadius: 22,
     projectile: "split",
     // All dx > 0: every fragment continues further in whatever direction the shell was
@@ -80,9 +80,9 @@ export const WEAPONS: Record<string, WeaponDefinition> = {
   love_is_pain: {
     id: "love_is_pain",
     name: "Love Is Pain",
-    description: "Blooms into a heart of flame at the peak of its arc, then drops straight down.",
+    description: "Blooms into a heart of flame just before impact, then drops straight down.",
     cost: 90,
-    damage: 8,
+    damage: 13,
     splashRadius: 15,
     projectile: "split",
     splitPattern: generateHeartPattern(10, 2.2),
@@ -92,6 +92,34 @@ export const WEAPONS: Record<string, WeaponDefinition> = {
     color: "#e11d48",
     icon: "heart",
     projectileStyle: "flame",
+  },
+  magma_strike: {
+    id: "magma_strike",
+    name: "Magma Strike",
+    description: "Fills the crater with lava that burns anyone standing in it for 4 turns.",
+    cost: 80,
+    damage: 20,
+    splashRadius: 45,
+    projectile: "parabolic",
+    hazard: { damagePerTurn: 15, turns: 4 },
+    defaultAmmo: 0,
+    purchasable: true,
+    color: "#c2410c",
+    icon: "magma",
+  },
+  bouncing_betty: {
+    id: "bouncing_betty",
+    name: "Bouncing Betty",
+    description: "Skips twice off the terrain before detonating on its third impact.",
+    cost: 65,
+    damage: 45,
+    splashRadius: 40,
+    projectile: "bounce",
+    maxBounces: 2,
+    defaultAmmo: 0,
+    purchasable: true,
+    color: "#0891b2",
+    icon: "bounce",
   },
 };
 

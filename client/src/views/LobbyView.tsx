@@ -31,6 +31,7 @@ export default function LobbyView() {
   const navigate = useNavigate();
   const [storedGames, setStoredGames] = useState(() => listStoredGames());
   const [displayName, setDisplayName] = useState("");
+  const [vsCpu, setVsCpu] = useState(false);
 
   const summariesQuery = useQuery({
     queryKey: ["gameSummaries", storedGames.map((g) => g.gameId)],
@@ -51,7 +52,7 @@ export default function LobbyView() {
   });
 
   const createMutation = useMutation({
-    mutationFn: () => createGame(displayName || undefined),
+    mutationFn: () => createGame(displayName || undefined, vsCpu),
     onSuccess: (res) => {
       saveGameIdentity(res.gameId, { token: res.playerToken, slot: 0 });
       navigate(`/game/${res.gameId}`);
@@ -92,12 +93,24 @@ export default function LobbyView() {
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
           />
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={vsCpu}
+              onChange={(e) => setVsCpu(e.target.checked)}
+            />
+            Play vs CPU (for solo testing)
+          </label>
           <Button
             className="w-full"
             onClick={() => createMutation.mutate()}
             disabled={createMutation.isPending}
           >
-            {createMutation.isPending ? "Creating..." : "Create game"}
+            {createMutation.isPending
+              ? "Creating..."
+              : vsCpu
+                ? "Create game vs CPU"
+                : "Create game"}
           </Button>
           {createMutation.isError && (
             <p className="text-sm text-destructive">{createMutation.error.message}</p>

@@ -1,9 +1,12 @@
 import {
+  BOUNCE_FRICTION,
+  BOUNCE_RESTITUTION,
   GRAVITY,
   MAX_SIM_TICKS,
   MIN_SPLIT_TICKS,
   POWER_TO_VELOCITY,
   SIM_DT,
+  SPLIT_FRACTION,
   TRAJECTORY_SAMPLE_COUNT,
 } from "./constants.js";
 import { heightAt } from "./terrain.js";
@@ -45,11 +48,13 @@ function runTickLoop(
   wind: number,
   terrain: Terrain,
   maxTicks: number,
+  maxBounces = 0,
 ): TickLoopResult {
   let x = startX;
   let y = startY;
   let vx = startVx;
   let vy = startVy;
+  let bouncesUsed = 0;
   const path: Point[] = [{ x, y }];
 
   for (let tick = 0; tick < maxTicks; tick++) {
@@ -65,6 +70,16 @@ function runTickLoop(
 
     const groundHeight = heightAt(terrain, x);
     if (y <= groundHeight) {
+      if (bouncesUsed < maxBounces) {
+        // Reflect instead of stopping — snap to the surface first so repeated bounces don't
+        // accumulate drift below ground, then lose some energy so it eventually settles.
+        y = groundHeight;
+        vy = -vy * BOUNCE_RESTITUTION;
+        vx *= BOUNCE_FRICTION;
+        path[path.length - 1] = { x, y };
+        bouncesUsed++;
+        continue;
+      }
       const impact = { x, y: groundHeight };
       path[path.length - 1] = impact;
       return { impact, path, finalX: x, finalY: y, finalVx: vx, finalVy: vy, ticksRun: tick + 1 };
@@ -90,15 +105,45 @@ export function simulateParabolic(input: ProjectileSimulationInput): ProjectileS
 }
 
 /**
- * A weapon that splits mid-air into a pattern of independent fragments. The carrier ascends
- * (checking terrain/bounds collision every tick, same as any other shot) up to the apex of
- * its arc, computed in closed form since vertical velocity only depends on gravity. If it
- * reaches the apex cleanly, each point in the weapon's `splitPattern` becomes one fragment:
- * we solve for whatever initial velocity puts that fragment at its target (dx, dy) offset
- * from the split point at `splitRevealTicks` ticks later (continuous-kinematics approximation
- * against the discrete tick sim — close enough for the pattern to read correctly, not meant
- * to be pixel-exact), then let it fall normally from there. If the carrier hits terrain or
- * leaves the board before reaching the apex, it never splits at all — just a direct hit/miss.
+ * A shell that skips off terrain instead of detonating on first contact, losing some speed
+ * each bounce (see BOUNCE_RESTITUTION/BOUNCE_FRICTION) until its bounce budget (`maxBounces`)
+ * is used up, at which point the next terrain contact is a real impact. Still just one
+ * continuous path with one final impact — the same shape `simulateParabolic` produces — so
+ * nothing downstream (combat resolution, animation, replay) needs to know bouncing exists.
+ */
+export function simulateBounce(
+  input: ProjectileSimulationInput,
+  weapon: WeaponDefinition,
+): ProjectileSegment[] {
+  const angleRad = (input.angle * Math.PI) / 180;
+  const speed = input.power * POWER_TO_VELOCITY;
+  const result = runTickLoop(
+    input.startX,
+    input.startY,
+    Math.cos(angleRad) * speed,
+    Math.sin(angleRad) * speed,
+    input.wind,
+    input.terrain,
+    MAX_SIM_TICKS,
+    weapon.maxBounces ?? 2,
+  );
+  return [{ impact: result.impact, path: result.path }];
+}
+
+/**
+ * A weapon that splits mid-air into a pattern of independent fragments. Rather than splitting
+ * at the trajectory's own physics apex (a point with no relation to where the shot is aimed —
+ * for any real-distance shot it sits roughly above the midpoint between the two tanks, not
+ * the target), the carrier first simulates its own undisturbed flight to learn how long it
+ * would fly before hitting terrain or leaving the board, then splits shortly before that
+ * (`SPLIT_FRACTION` of the way through) — so the burst always happens near wherever the shot
+ * would have landed. Each point in the weapon's `splitPattern` becomes one fragment: we solve
+ * for whatever initial velocity puts that fragment at its target (dx, dy) offset from the
+ * split point at `splitRevealTicks` ticks later (continuous-kinematics approximation against
+ * the discrete tick sim — close enough for the pattern to read correctly, not meant to be
+ * pixel-exact), then let it fall normally from there. If the shot is short enough that
+ * `MIN_SPLIT_TICKS` would exceed its natural flight (e.g. a point-blank shot), it never splits
+ * at all — just a direct hit/miss, same as the underlying flight would have produced.
  */
 export function simulateSplit(
   input: ProjectileSimulationInput,
@@ -109,14 +154,16 @@ export function simulateSplit(
   const vx0 = Math.cos(angleRad) * speed;
   const vy0 = Math.sin(angleRad) * speed;
 
-  const apexTick = Math.max(MIN_SPLIT_TICKS, Math.ceil(vy0 / (GRAVITY * SIM_DT)));
-  const stopTick = Math.min(apexTick, MAX_SIM_TICKS);
+  const naturalFlight = runTickLoop(input.startX, input.startY, vx0, vy0, input.wind, input.terrain, MAX_SIM_TICKS);
+  const splitTick = Math.max(MIN_SPLIT_TICKS, Math.round(naturalFlight.ticksRun * SPLIT_FRACTION));
+  const stopTick = Math.min(splitTick, MAX_SIM_TICKS);
 
   const ascent = runTickLoop(input.startX, input.startY, vx0, vy0, input.wind, input.terrain, stopTick);
   const carrierSegment: ProjectileSegment = { impact: ascent.impact, path: ascent.path };
 
   if (ascent.ticksRun < stopTick) {
-    // Hit terrain or left the board before reaching the apex — no room to split.
+    // The shot's natural flight was shorter than MIN_SPLIT_TICKS (e.g. point-blank) — no room
+    // to split, so this is just the direct hit/miss the underlying flight would have produced.
     return [carrierSegment];
   }
 
@@ -163,6 +210,7 @@ const projectileSimulators: Record<
 > = {
   parabolic: simulateParabolic,
   split: simulateSplit,
+  bounce: simulateBounce,
 };
 
 export function simulateProjectile(

@@ -3,6 +3,7 @@ import type {
   GameDoc,
   GameMode,
   GameStatus,
+  HazardZone,
   PlayerState,
   Terrain,
   TurnAction,
@@ -43,6 +44,7 @@ export interface GameRecord {
   players: PlayerState[];
   winnerPlayerId: string | null;
   turnCount: number;
+  hazards: HazardZone[];
 }
 
 export interface TurnRecord {
@@ -70,6 +72,7 @@ export function serializeGame(doc: WithId<GameRecord>): GameDoc {
     terrain: doc.terrain,
     players: doc.players,
     winnerPlayerId: doc.winnerPlayerId,
+    hazards: doc.hazards ?? [],
   };
 }
 

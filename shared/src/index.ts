@@ -5,3 +5,4 @@ export * from "./terrain.js";
 export * from "./physics.js";
 export * from "./combat.js";
 export * from "./setup.js";
+export * from "./cpu.js";

@@ -19,7 +19,7 @@ export default function GameOverView({ game, mySlot }: Props) {
   const draw = game.winnerPlayerId === null;
 
   const rematchMutation = useMutation({
-    mutationFn: () => createGame(),
+    mutationFn: () => createGame(undefined, game.mode === "vs_cpu"),
     onSuccess: (res) => {
       saveGameIdentity(res.gameId, { token: res.playerToken, slot: 0 });
       navigate(`/game/${res.gameId}`);
@@ -36,7 +36,7 @@ export default function GameOverView({ game, mySlot }: Props) {
           <CardDescription>The battle has ended.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <TerrainCanvas terrain={game.terrain} players={game.players} />
+          <TerrainCanvas terrain={game.terrain} players={game.players} hazards={game.hazards} />
           <Button onClick={() => rematchMutation.mutate()} disabled={rematchMutation.isPending}>
             {rematchMutation.isPending ? "Creating..." : "Start a new game"}
           </Button>

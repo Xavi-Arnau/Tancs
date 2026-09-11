@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getGameIdentity } from "@/identity/playerToken";
@@ -39,6 +39,13 @@ export default function GameView() {
   const identity = gameId ? getGameIdentity(gameId) : null;
 
   const { data, isLoading, error, markSeen } = useGameState(gameId, identity?.token);
+  // While the acting player's own shot is still animating in BattleView, hold off switching to
+  // GameOverView or ReplayOverlay even once the (quickly-refetched) data says otherwise —
+  // otherwise a later screen preempts the shot before its impact is even shown. This matters
+  // most against a CPU opponent: its reply turn is resolved synchronously, in the same request
+  // as the player's own shot, so it can already be sitting in the DB (and get polled as an
+  // "unseen" turn) before the player's own animation has even finished.
+  const [battleAnimating, setBattleAnimating] = useState(false);
 
   let content: ReactNode;
 
@@ -57,7 +64,7 @@ export default function GameView() {
     const { game, newTurns, latestTurnNumber } = data;
     const mySlot = identity.slot;
 
-    if (newTurns.length > 0) {
+    if (newTurns.length > 0 && !battleAnimating) {
       content = (
         <ReplayOverlay
           game={game}
@@ -70,7 +77,7 @@ export default function GameView() {
       content = <WaitingForOpponentView game={game} />;
     } else if (game.status === "buy_phase") {
       content = <BuyPhaseView game={game} gameId={gameId!} token={identity.token} mySlot={mySlot} />;
-    } else if (game.status === "game_over") {
+    } else if (game.status === "game_over" && !battleAnimating) {
       content = <GameOverView game={game} mySlot={mySlot} />;
     } else {
       content = (
@@ -80,6 +87,7 @@ export default function GameView() {
           token={identity.token}
           mySlot={mySlot}
           markSeen={markSeen}
+          onAnimatingChange={setBattleAnimating}
         />
       );
     }

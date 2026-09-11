@@ -8,8 +8,8 @@ export interface CreateGameResponse {
   game: GameDoc;
 }
 
-export function createGame(displayName?: string): Promise<CreateGameResponse> {
-  return apiPost("create-game", { displayName });
+export function createGame(displayName?: string, vsCpu?: boolean): Promise<CreateGameResponse> {
+  return apiPost("create-game", { displayName, vsCpu });
 }
 
 export interface JoinGameResponse {

@@ -1,4 +1,4 @@
-import { BOARD_WIDTH, createInitialTerrain, createPlayerState } from "@tancs/shared";
+import { BOARD_WIDTH, cpuLoadout, createInitialTerrain, createPlayerState } from "@tancs/shared";
 import type { Context } from "@netlify/functions";
 import { withDb } from "./_lib/db.js";
 import type { GameRecord, PlayerLinkRecord, PlayerRecord } from "./_lib/models.js";
@@ -11,6 +11,7 @@ export default async (req: Request, _context: Context): Promise<Response> => {
   try {
     const body = await parseJsonBody(req);
     const displayName = optionalString(body, "displayName");
+    const vsCpu = body.vsCpu === true;
 
     return await withDb(async (db) => {
       const now = new Date();
@@ -27,9 +28,28 @@ export default async (req: Request, _context: Context): Promise<Response> => {
       const player0 = createPlayerState(playerId.toHexString(), 0, terrain.width, displayName);
       const inviteToken = generateToken();
 
+      const players = [player0];
+      if (vsCpu) {
+        const cpuPlayerResult = await db.collection<PlayerRecord>("players").insertOne({
+          displayName: "CPU",
+          createdAt: now,
+          authProvider: null,
+          authSubjectId: null,
+        });
+        const cpuPlayer = createPlayerState(
+          cpuPlayerResult.insertedId.toHexString(),
+          1,
+          terrain.width,
+          "CPU",
+        );
+        cpuPlayer.readyForBuyPhase = true;
+        cpuPlayer.inventory = cpuLoadout();
+        players.push(cpuPlayer);
+      }
+
       const gameRecord: GameRecord = {
-        mode: "single_battle",
-        status: "waiting_for_player2",
+        mode: vsCpu ? "vs_cpu" : "single_battle",
+        status: vsCpu ? "buy_phase" : "waiting_for_player2",
         inviteToken,
         createdAt: now,
         updatedAt: now,
@@ -37,9 +57,10 @@ export default async (req: Request, _context: Context): Promise<Response> => {
         currentTurnPlayerIndex: 0,
         wind: 0,
         terrain,
-        players: [player0],
+        players,
         winnerPlayerId: null,
         turnCount: 0,
+        hazards: [],
       };
       const gameResult = await db.collection<GameRecord>("games").insertOne(gameRecord);
       const gameId = gameResult.insertedId;

@@ -14,7 +14,8 @@ export const WIND_MAX = 40; // signed horizontal acceleration, randomized each t
 export const STARTING_HP = 100;
 export const STARTING_CURRENCY = 1000;
 
-export const TANK_START_MARGIN_RATIO = 0.15; // tanks start this fraction in from each edge
+export const TANK_SPAWN_EDGE_MARGIN_RATIO = 0.15; // closest a tank can spawn to its own outer edge
+export const TANK_SPAWN_CENTER_MARGIN_RATIO = 0.15; // closest a tank can spawn to the board's center line
 export const TANK_WIDTH = 24; // used for splash-distance and rendering, in board units
 export const BARREL_LAUNCH_HEIGHT = 14; // vertical offset from tank base to barrel tip, in board units
 
@@ -28,3 +29,14 @@ export const MAX_POWER = 100;
 // "split" projectile weapons (e.g. cluster bombs): minimum ticks of ascent before a split is
 // allowed, so a very flat shot doesn't split at the muzzle.
 export const MIN_SPLIT_TICKS = 10;
+
+// Fraction of the shot's natural (undisturbed) flight duration at which it splits — near the
+// end of the flight, close to where it would have landed, rather than at the trajectory's own
+// physics apex (which has no relation to where the shot is aimed and is often nowhere near
+// the target).
+export const SPLIT_FRACTION = 0.88;
+
+// "bounce" projectile weapons: how much vertical/horizontal speed a shot keeps after each
+// bounce off terrain (< 1 so it loses energy and eventually settles instead of bouncing forever).
+export const BOUNCE_RESTITUTION = 0.6; // vy retained per bounce
+export const BOUNCE_FRICTION = 0.85; // vx retained per bounce

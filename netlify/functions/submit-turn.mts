@@ -9,6 +9,7 @@ import {
 } from "@tancs/shared";
 import type { Context } from "@netlify/functions";
 import { requireAuth } from "./_lib/auth.js";
+import { resolveCpuTurn } from "./_lib/cpuTurn.js";
 import { withDb } from "./_lib/db.js";
 import type { GameRecord, TurnRecord } from "./_lib/models.js";
 import { serializeGame, serializeTurn } from "./_lib/models.js";
@@ -60,12 +61,16 @@ export default async (req: Request, _context: Context): Promise<Response> => {
         }
       }
 
+      const newTurnNumber = game.turnCount + 1;
+
       const result = resolveShot({
         terrain: game.terrain,
         players: game.players,
         wind: game.wind,
         actingSlot: auth.slot,
         action: { weaponId, angle, power },
+        hazards: game.hazards ?? [],
+        turnNumber: newTurnNumber,
       });
       result.players[auth.slot].lastAngle = angle;
 
@@ -76,8 +81,23 @@ export default async (req: Request, _context: Context): Promise<Response> => {
             ? 1
             : 0;
       const nextWind = Math.round((Math.random() * 2 - 1) * WIND_MAX);
-      const newTurnNumber = game.turnCount + 1;
       const now = new Date();
+
+      // In a vs-CPU game, if the human's shot hands the turn to the CPU (slot 1) and the game
+      // isn't over, resolve the CPU's turn right here too — there's no background/cron
+      // infrastructure to do it later, so it must happen inline before this single write.
+      const cpuTurn =
+        game.mode === "vs_cpu" &&
+        result.resolution.resultingGameStatus !== "game_over" &&
+        nextTurnPlayerIndex === 1
+          ? resolveCpuTurn({
+              terrain: result.terrain,
+              players: result.players,
+              hazards: result.hazards,
+              wind: nextWind,
+              turnNumber: newTurnNumber + 1,
+            })
+          : null;
 
       const updated = await db.collection<GameRecord>("games").findOneAndUpdate(
         {
@@ -88,14 +108,15 @@ export default async (req: Request, _context: Context): Promise<Response> => {
         },
         {
           $set: {
-            terrain: result.terrain,
-            players: result.players,
-            status: result.resolution.resultingGameStatus,
-            currentTurnPlayerIndex: nextTurnPlayerIndex,
-            wind: nextWind,
-            winnerPlayerId: result.winnerPlayerId,
+            terrain: cpuTurn ? cpuTurn.terrain : result.terrain,
+            players: cpuTurn ? cpuTurn.players : result.players,
+            hazards: cpuTurn ? cpuTurn.hazards : result.hazards,
+            status: cpuTurn ? cpuTurn.status : result.resolution.resultingGameStatus,
+            currentTurnPlayerIndex: cpuTurn ? cpuTurn.currentTurnPlayerIndex : nextTurnPlayerIndex,
+            wind: cpuTurn ? cpuTurn.wind : nextWind,
+            winnerPlayerId: cpuTurn ? cpuTurn.winnerPlayerId : result.winnerPlayerId,
             updatedAt: now,
-            turnCount: newTurnNumber,
+            turnCount: cpuTurn ? newTurnNumber + 1 : newTurnNumber,
           },
           $inc: { version: 1 },
         },
@@ -116,6 +137,32 @@ export default async (req: Request, _context: Context): Promise<Response> => {
         resolution: result.resolution,
         createdAt: now,
       };
+
+      if (cpuTurn) {
+        const cpuTurnRecord: TurnRecord = {
+          gameId: game._id,
+          round: 1,
+          turnNumber: newTurnNumber + 1,
+          actingPlayerId: cpuTurn.players[1].playerId,
+          actingSlot: 1,
+          action: cpuTurn.action,
+          resolution: cpuTurn.resolution,
+          createdAt: now,
+        };
+        const insertResult = await db
+          .collection<TurnRecord>("turns")
+          .insertMany([turnRecord, cpuTurnRecord]);
+
+        // The CPU's turn is deliberately left "unseen" client-side — it isn't returned here
+        // and markSeen() is never called for it, so the client's next poll picks it up as a
+        // new turn and ReplayOverlay animates it automatically, exactly like a real second
+        // player's move.
+        return json({
+          game: serializeGame(updated),
+          turn: serializeTurn({ ...turnRecord, _id: insertResult.insertedIds[0] }),
+        });
+      }
+
       const insertResult = await db.collection<TurnRecord>("turns").insertOne(turnRecord);
 
       return json({

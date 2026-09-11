@@ -2,7 +2,8 @@ import {
   BOARD_WIDTH,
   STARTING_CURRENCY,
   STARTING_HP,
-  TANK_START_MARGIN_RATIO,
+  TANK_SPAWN_CENTER_MARGIN_RATIO,
+  TANK_SPAWN_EDGE_MARGIN_RATIO,
 } from "./constants.js";
 import { generateTerrain } from "./terrain.js";
 import type { PlayerState, Terrain } from "./types.js";
@@ -15,9 +16,16 @@ export function createInitialTerrain(
   return generateTerrain(width, rng);
 }
 
-export function initialTankX(slot: 0 | 1, width: number = BOARD_WIDTH): number {
-  const margin = width * TANK_START_MARGIN_RATIO;
-  return slot === 0 ? margin : width - margin;
+export function initialTankX(
+  slot: 0 | 1,
+  width: number = BOARD_WIDTH,
+  rng: () => number = Math.random,
+): number {
+  const edgeMargin = width * TANK_SPAWN_EDGE_MARGIN_RATIO;
+  const centerMargin = width * TANK_SPAWN_CENTER_MARGIN_RATIO;
+  const zoneStart = slot === 0 ? edgeMargin : width / 2 + centerMargin;
+  const zoneEnd = slot === 0 ? width / 2 - centerMargin : width - edgeMargin;
+  return zoneStart + rng() * (zoneEnd - zoneStart);
 }
 
 export function createPlayerState(
@@ -25,11 +33,12 @@ export function createPlayerState(
   slot: 0 | 1,
   width: number = BOARD_WIDTH,
   displayName: string | null = null,
+  rng: () => number = Math.random,
 ): PlayerState {
   return {
     playerId,
     slot,
-    tankX: initialTankX(slot, width),
+    tankX: initialTankX(slot, width, rng),
     hp: STARTING_HP,
     currency: STARTING_CURRENCY,
     readyForBuyPhase: false,

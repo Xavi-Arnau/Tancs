@@ -8,7 +8,7 @@
     "shared"
   ],
   "scripts": {
-    "dev": "npm run build --workspace=shared && netlify dev",
+    "dev": "npm run build --workspace=shared && netlify dev --filter client",
     "build": "npm run build --workspace=shared && npm run build --workspace=client"
   },
   "dependencies": {
