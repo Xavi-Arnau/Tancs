@@ -1,4 +1,4 @@
-import type { GameDoc, TurnDoc } from "@tancs/shared";
+import type { GameDoc, GameSummary, TurnDoc } from "@tancs/shared";
 import { apiGet, apiPost } from "./client";
 
 export interface CreateGameResponse {
@@ -61,4 +61,14 @@ export function submitTurn(
   power: number,
 ): Promise<SubmitTurnResponse> {
   return apiPost("submit-turn", { gameId, token, weaponId, angle, power });
+}
+
+export interface GameSummariesResponse {
+  summaries: GameSummary[];
+}
+
+export function getGameSummaries(
+  games: { gameId: string; token: string }[],
+): Promise<GameSummariesResponse> {
+  return apiPost("game-summaries", { games });
 }

@@ -1,15 +1,54 @@
-import { useMutation } from "@tanstack/react-query";
+import type { GameSummary, GameSummaryOk } from "@tancs/shared";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { XIcon } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { createGame } from "@/api/games";
+import { createGame, getGameSummaries } from "@/api/games";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { listStoredGameIds, saveGameIdentity } from "@/identity/playerToken";
+import { listStoredGames, removeGameIdentity, saveGameIdentity } from "@/identity/playerToken";
+
+function statusLabel(summary: GameSummaryOk): string {
+  switch (summary.status) {
+    case "waiting_for_player2":
+      return "Waiting for opponent to join";
+    case "buy_phase":
+      return summary.isMyTurn ? "Your turn to buy weapons" : "Waiting for opponent to buy";
+    case "battle_phase":
+      return summary.isMyTurn ? "Your turn" : "Opponent's turn";
+    case "game_over":
+      if (summary.winnerIsMe === null) return "Game over — draw";
+      return summary.winnerIsMe ? "You won" : "You lost";
+  }
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
 
 export default function LobbyView() {
   const navigate = useNavigate();
-  const [storedGameIds] = useState(() => listStoredGameIds());
+  const [storedGames, setStoredGames] = useState(() => listStoredGames());
   const [displayName, setDisplayName] = useState("");
+
+  const summariesQuery = useQuery({
+    queryKey: ["gameSummaries", storedGames.map((g) => g.gameId)],
+    queryFn: () => getGameSummaries(storedGames),
+    enabled: storedGames.length > 0,
+  });
+
+  const summaryById = new Map<string, GameSummary>(
+    (summariesQuery.data?.summaries ?? []).map((s) => [s.gameId, s]),
+  );
+
+  const sortedGames = [...storedGames].sort((a, b) => {
+    const sa = summaryById.get(a.gameId);
+    const sb = summaryById.get(b.gameId);
+    const aTurn = sa?.ok && sa.isMyTurn ? 1 : 0;
+    const bTurn = sb?.ok && sb.isMyTurn ? 1 : 0;
+    return bTurn - aTurn;
+  });
 
   const createMutation = useMutation({
     mutationFn: () => createGame(displayName || undefined),
@@ -18,6 +57,17 @@ export default function LobbyView() {
       navigate(`/game/${res.gameId}`);
     },
   });
+
+  function handleRemove(gameId: string) {
+    const confirmed = window.confirm(
+      "Remove this game from your list? You won't be able to access it from this device anymore. " +
+        "Only do this for games that are already finished (or abandoned) — if it's still in " +
+        "progress, your opponent will be left waiting for a turn that will never come.",
+    );
+    if (!confirmed) return;
+    removeGameIdentity(gameId);
+    setStoredGames((games) => games.filter((g) => g.gameId !== gameId));
+  }
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-4 py-12">
@@ -55,23 +105,64 @@ export default function LobbyView() {
         </CardContent>
       </Card>
 
-      {storedGameIds.length > 0 && (
+      {storedGames.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Your games</CardTitle>
             <CardDescription>Games you've created or joined on this device.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
-            {storedGameIds.map((gameId) => (
-              <Button
-                key={gameId}
-                variant="outline"
-                className="justify-start font-mono text-xs"
-                onClick={() => navigate(`/game/${gameId}`)}
-              >
-                {gameId}
-              </Button>
-            ))}
+            {summariesQuery.isLoading && (
+              <p className="text-sm text-muted-foreground">Loading your games...</p>
+            )}
+            {summariesQuery.isError && (
+              <p className="text-sm text-destructive">Couldn't load your games right now.</p>
+            )}
+            {sortedGames.map(({ gameId }) => {
+              const summary = summaryById.get(gameId);
+              return (
+                <div key={gameId} className="flex items-center gap-2">
+                  <button
+                    className="flex flex-1 flex-col items-start gap-1 rounded-md border border-input px-3 py-2 text-left text-sm shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground"
+                    onClick={() => navigate(`/game/${gameId}`)}
+                  >
+                    {!summary ? (
+                      <span className="font-mono text-xs text-muted-foreground">{gameId}</span>
+                    ) : !summary.ok ? (
+                      <span className="text-muted-foreground">Unavailable</span>
+                    ) : (
+                      <>
+                        <div className="flex w-full items-center justify-between gap-2">
+                          <span className="font-medium">
+                            vs {summary.opponentDisplayName ?? "Opponent"}
+                          </span>
+                          {summary.isMyTurn && <Badge>Your turn</Badge>}
+                        </div>
+                        <div className="flex w-full items-center justify-between text-xs text-muted-foreground">
+                          <span>{statusLabel(summary)}</span>
+                          <span>{formatDate(summary.createdAt)}</span>
+                        </div>
+                        <div className="flex w-full items-center justify-between text-xs text-muted-foreground">
+                          <span>
+                            You: {summary.myHp} HP
+                            {summary.opponentHp !== null && ` · Opponent: ${summary.opponentHp} HP`}
+                          </span>
+                          <span>{summary.latestTurnNumber} turns</span>
+                        </div>
+                      </>
+                    )}
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Remove game from list"
+                    onClick={() => handleRemove(gameId)}
+                  >
+                    <XIcon />
+                  </Button>
+                </div>
+              );
+            })}
           </CardContent>
         </Card>
       )}

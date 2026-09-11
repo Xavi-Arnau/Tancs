@@ -1,4 +1,4 @@
-import { listPurchasableWeapons, type GameDoc } from "@tancs/shared";
+import { listPurchasableWeapons, type GameDoc, type WeaponDefinition } from "@tancs/shared";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { buyWeapons } from "@/api/games";
@@ -11,12 +11,25 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { getWeaponIcon } from "@/game/weaponIcons";
 
 interface Props {
   game: GameDoc;
   gameId: string;
   token: string;
   mySlot: 0 | 1;
+}
+
+function WeaponIcon({ weapon }: { weapon: WeaponDefinition }) {
+  const Icon = getWeaponIcon(weapon.icon);
+  return (
+    <div
+      className="flex size-10 shrink-0 items-center justify-center rounded-full"
+      style={{ backgroundColor: `${weapon.color}20`, color: weapon.color }}
+    >
+      <Icon className="size-5" />
+    </div>
+  );
 }
 
 export default function BuyPhaseView({ game, gameId, token, mySlot }: Props) {
@@ -72,36 +85,43 @@ export default function BuyPhaseView({ game, gameId, token, mySlot }: Props) {
       </div>
 
       <div className="flex flex-col gap-3">
-        {weapons.map((weapon) => (
-          <Card key={weapon.id}>
-            <CardHeader>
-              <CardTitle className="text-base">{weapon.name}</CardTitle>
-              <CardDescription>{weapon.description}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">
-                {weapon.cost} currency each &middot; damage {weapon.damage}
-              </span>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  onClick={() => setQty(weapon.id, (quantities[weapon.id] ?? 0) - 1)}
-                >
-                  -
-                </Button>
-                <span className="w-6 text-center">{quantities[weapon.id] ?? 0}</span>
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  onClick={() => setQty(weapon.id, (quantities[weapon.id] ?? 0) + 1)}
-                >
-                  +
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+        {weapons.map((weapon) => {
+          const canAffordOneMore = totalCost + weapon.cost <= me.currency;
+          return (
+            <Card key={weapon.id}>
+              <CardHeader className="flex items-center gap-3">
+                <WeaponIcon weapon={weapon} />
+                <div>
+                  <CardTitle className="text-base">{weapon.name}</CardTitle>
+                  <CardDescription>{weapon.description}</CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  {weapon.cost} currency each &middot; damage {weapon.damage}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    onClick={() => setQty(weapon.id, (quantities[weapon.id] ?? 0) - 1)}
+                  >
+                    -
+                  </Button>
+                  <span className="w-6 text-center">{quantities[weapon.id] ?? 0}</span>
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    disabled={!canAffordOneMore}
+                    onClick={() => setQty(weapon.id, (quantities[weapon.id] ?? 0) + 1)}
+                  >
+                    +
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       <Card>

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import TerrainCanvas, { type ActiveShot } from "@/game/TerrainCanvas";
+import { getWeaponIcon } from "@/game/weaponIcons";
 import { getLastShot, saveLastShot } from "@/identity/lastShotSettings";
 
 interface Props {
@@ -48,9 +49,16 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen }: Pr
       saveLastShot(gameId, { weaponId, angle, power });
       setActiveShot({
         preImpactTerrain: game.terrain,
-        trajectory: res.turn.resolution.trajectory,
+        projectiles: res.turn.resolution.projectiles.map((p) => ({
+          trajectory: p.trajectory,
+          tickCount: p.tickCount,
+          startTick: p.startTick,
+          impact: p.impact,
+          terrainDiff: p.terrainDiff,
+        })),
         actingSlot: mySlot,
         angle,
+        projectileStyle: getWeapon(weaponId).projectileStyle,
         onComplete: () => {
           setActiveShot(null);
           queryClient.invalidateQueries({ queryKey: ["gameState", gameId] });
@@ -95,17 +103,22 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen }: Pr
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-wrap gap-2">
-            {availableWeapons.map((w) => (
-              <Button
-                key={w.id}
-                variant={weaponId === w.id ? "default" : "outline"}
-                size="sm"
-                disabled={!isMyTurn}
-                onClick={() => setWeaponId(w.id)}
-              >
-                {w.name} ({ammoLabel(w.id)})
-              </Button>
-            ))}
+            {availableWeapons.map((w) => {
+              const Icon = getWeaponIcon(w.icon);
+              return (
+                <Button
+                  key={w.id}
+                  variant={weaponId === w.id ? "default" : "outline"}
+                  disabled={!isMyTurn}
+                  onClick={() => setWeaponId(w.id)}
+                  className="h-24 w-24 flex-col gap-1 p-2"
+                >
+                  <Icon className="size-9" style={{ color: w.color }} />
+                  <span className="text-xs font-medium leading-tight">{w.name}</span>
+                  <span className="text-[10px] leading-tight opacity-75">{ammoLabel(w.id)}</span>
+                </Button>
+              );
+            })}
           </div>
 
           <div className="flex flex-col gap-2">

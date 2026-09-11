@@ -6,17 +6,28 @@ import {
   type PlayerState,
   type Point,
   type Terrain,
+  type TerrainDiffEntry,
 } from "@tancs/shared";
 import { useEffect, useRef } from "react";
 
 const PLAYER_COLORS: [string, string] = ["#e5484d", "#3b82f6"]; // slot 0 red, slot 1 blue
-const SHOT_DURATION_MS = 1400;
+const MS_PER_TICK = 1000 / 60; // real-time-ish playback speed, independent of the physics tick rate
+const BURST_FADE_MS = 350;
+
+export interface ActiveShotProjectile {
+  trajectory: Point[];
+  tickCount: number;
+  startTick: number;
+  impact: Point | null;
+  terrainDiff: TerrainDiffEntry[];
+}
 
 export interface ActiveShot {
   preImpactTerrain: Terrain;
-  trajectory: Point[];
+  projectiles: ActiveShotProjectile[];
   actingSlot: 0 | 1;
   angle: number;
+  projectileStyle?: string; // e.g. "flame" — one value for the whole shot, same weapon throughout
   onComplete: () => void;
 }
 
@@ -115,6 +126,28 @@ function pointAtProgress(trajectory: Point[], progress: number): Point {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
+function drawFlame(ctx: CanvasRenderingContext2D, x: number, y: number, elapsedMs: number, alpha = 1) {
+  const flicker = 1 + Math.sin(elapsedMs * 0.03 + x) * 0.15;
+  const r = 6 * flicker;
+  const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+  grad.addColorStop(0, `rgba(255,247,214,${alpha})`);
+  grad.addColorStop(0.45, `rgba(251,191,36,${0.9 * alpha})`);
+  grad.addColorStop(0.8, `rgba(249,115,22,${0.6 * alpha})`);
+  grad.addColorStop(1, "rgba(239,68,68,0)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.ellipse(x, y - r * 0.3, r * 0.7, r, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function terrainWithDiffs(base: Terrain, diffLists: TerrainDiffEntry[][]): Terrain {
+  const heights = base.heights.slice();
+  for (const diffs of diffLists) {
+    for (const d of diffs) heights[d.x] = d.newHeight;
+  }
+  return { width: base.width, heights };
+}
+
 export default function TerrainCanvas({ terrain, players, aim, activeShot }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -132,7 +165,7 @@ export default function TerrainCanvas({ terrain, players, aim, activeShot }: Pro
   function renderScene(
     ctx: CanvasRenderingContext2D,
     canvas: HTMLCanvasElement,
-    progress: number,
+    elapsedMs: number,
     shot: ActiveShot | null | undefined,
   ) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -143,7 +176,16 @@ export default function TerrainCanvas({ terrain, players, aim, activeShot }: Pro
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const renderTerrain = shot && progress < 1 ? shot.preImpactTerrain : terrainRef.current;
+    const elapsedTicks = elapsedMs / MS_PER_TICK;
+
+    const landedDiffs: TerrainDiffEntry[][] = [];
+    if (shot) {
+      for (const p of shot.projectiles) {
+        const endTick = p.startTick + p.tickCount;
+        if (elapsedTicks >= endTick && p.impact) landedDiffs.push(p.terrainDiff);
+      }
+    }
+    const renderTerrain = shot ? terrainWithDiffs(shot.preImpactTerrain, landedDiffs) : terrainRef.current;
     drawTerrain(ctx, renderTerrain);
 
     for (const player of playersRef.current) {
@@ -158,30 +200,53 @@ export default function TerrainCanvas({ terrain, players, aim, activeShot }: Pro
     }
 
     if (shot) {
-      const p = pointAtProgress(shot.trajectory, progress);
-      ctx.beginPath();
-      ctx.arc(p.x, toScreenY(p.y), 4, 0, Math.PI * 2);
-      ctx.fillStyle = "#1a1a1a";
-      ctx.fill();
+      for (const p of shot.projectiles) {
+        const endTick = p.startTick + p.tickCount;
+        if (elapsedTicks < p.startTick) continue; // hasn't launched yet
 
-      for (let i = 1; i <= 4; i++) {
-        const trailProgress = Math.max(0, progress - i * 0.02);
-        const tp = pointAtProgress(shot.trajectory, trailProgress);
-        ctx.beginPath();
-        ctx.arc(tp.x, toScreenY(tp.y), 3 - i * 0.5, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(26,26,26,${0.4 - i * 0.08})`;
-        ctx.fill();
-      }
+        const localProgress = Math.min(1, (elapsedTicks - p.startTick) / p.tickCount);
+        const point = pointAtProgress(p.trajectory, localProgress);
 
-      if (progress >= 1) {
-        const [ix, iy] = [p.x, toScreenY(p.y)];
-        const burst = ctx.createRadialGradient(ix, iy, 0, ix, iy, 20);
-        burst.addColorStop(0, "rgba(255,200,80,0.9)");
-        burst.addColorStop(1, "rgba(255,200,80,0)");
-        ctx.fillStyle = burst;
-        ctx.beginPath();
-        ctx.arc(ix, iy, 20, 0, Math.PI * 2);
-        ctx.fill();
+        if (localProgress < 1) {
+          const screenX = point.x;
+          const screenY = toScreenY(point.y);
+
+          if (shot.projectileStyle === "flame") {
+            for (let i = 4; i >= 1; i--) {
+              const trailProgress = Math.max(0, localProgress - i * 0.025);
+              const tp = pointAtProgress(p.trajectory, trailProgress);
+              drawFlame(ctx, tp.x, toScreenY(tp.y), elapsedMs, 1 - i * 0.2);
+            }
+            drawFlame(ctx, screenX, screenY, elapsedMs);
+          } else {
+            ctx.beginPath();
+            ctx.arc(screenX, screenY, 4, 0, Math.PI * 2);
+            ctx.fillStyle = "#1a1a1a";
+            ctx.fill();
+
+            for (let i = 1; i <= 4; i++) {
+              const trailProgress = Math.max(0, localProgress - i * 0.02);
+              const tp = pointAtProgress(p.trajectory, trailProgress);
+              ctx.beginPath();
+              ctx.arc(tp.x, toScreenY(tp.y), 3 - i * 0.5, 0, Math.PI * 2);
+              ctx.fillStyle = `rgba(26,26,26,${0.4 - i * 0.08})`;
+              ctx.fill();
+            }
+          }
+        } else if (p.impact) {
+          const msSinceLanding = elapsedMs - endTick * MS_PER_TICK;
+          if (msSinceLanding < BURST_FADE_MS) {
+            const alpha = 0.9 * (1 - msSinceLanding / BURST_FADE_MS);
+            const [ix, iy] = [point.x, toScreenY(point.y)];
+            const burst = ctx.createRadialGradient(ix, iy, 0, ix, iy, 20);
+            burst.addColorStop(0, `rgba(255,200,80,${alpha})`);
+            burst.addColorStop(1, "rgba(255,200,80,0)");
+            ctx.fillStyle = burst;
+            ctx.beginPath();
+            ctx.arc(ix, iy, 20, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
       }
     }
   }
@@ -195,19 +260,20 @@ export default function TerrainCanvas({ terrain, players, aim, activeShot }: Pro
     if (!canvas || !ctx) return;
 
     if (!activeShot) {
-      renderScene(ctx, canvas, 1, null);
+      renderScene(ctx, canvas, 0, null);
       return;
     }
 
+    const maxEndTick = Math.max(...activeShot.projectiles.map((p) => p.startTick + p.tickCount));
     let rafId: number;
     let startTime: number | null = null;
 
     function tick(now: number) {
       if (!canvas || !ctx) return;
       if (startTime === null) startTime = now;
-      const progress = Math.min(1, (now - startTime) / SHOT_DURATION_MS);
-      renderScene(ctx, canvas, progress, activeShot);
-      if (progress < 1) {
+      const elapsedMs = now - startTime;
+      renderScene(ctx, canvas, elapsedMs, activeShot);
+      if (elapsedMs / MS_PER_TICK < maxEndTick) {
         rafId = requestAnimationFrame(tick);
       } else {
         activeShot!.onComplete();
@@ -226,7 +292,7 @@ export default function TerrainCanvas({ terrain, players, aim, activeShot }: Pro
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    renderScene(ctx, canvas, 1, null);
+    renderScene(ctx, canvas, 0, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terrain, players, aim, activeShot]);
 

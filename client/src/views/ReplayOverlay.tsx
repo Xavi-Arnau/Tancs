@@ -1,4 +1,11 @@
-import { getWeapon, type GameDoc, type PlayerState, type Terrain, type TurnDoc } from "@tancs/shared";
+import {
+  getWeapon,
+  turnHadAnyImpact,
+  type GameDoc,
+  type PlayerState,
+  type Terrain,
+  type TurnDoc,
+} from "@tancs/shared";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import TerrainCanvas, { type ActiveShot } from "@/game/TerrainCanvas";
@@ -12,17 +19,25 @@ interface Step {
 
 function reconstructSteps(game: GameDoc, turns: TurnDoc[]): Step[] {
   const initialHeights = game.terrain.heights.slice();
+  // Undo in reverse chronological order — both across turns and, within each turn, across
+  // its projectiles — since overlapping craters (multiple fragments landing near each
+  // other) make `oldHeight`/`newHeight` assignment order-sensitive, unlike a simple sum.
   for (let i = turns.length - 1; i >= 0; i--) {
-    for (const d of turns[i].resolution.terrainDiff) {
-      initialHeights[d.x] = d.oldHeight;
+    const projectiles = turns[i].resolution.projectiles;
+    for (let j = projectiles.length - 1; j >= 0; j--) {
+      for (const d of projectiles[j].terrainDiff) {
+        initialHeights[d.x] = d.oldHeight;
+      }
     }
   }
 
   const initialHp: Record<string, number> = {};
   for (const p of game.players) initialHp[p.playerId] = p.hp;
   for (const turn of turns) {
-    for (const d of turn.resolution.damage) {
-      initialHp[d.playerId] = (initialHp[d.playerId] ?? 0) + d.amount;
+    for (const projectile of turn.resolution.projectiles) {
+      for (const d of projectile.damage) {
+        initialHp[d.playerId] = (initialHp[d.playerId] ?? 0) + d.amount;
+      }
     }
     for (const f of turn.resolution.tankFalls) {
       initialHp[f.playerId] = (initialHp[f.playerId] ?? 0) + f.fallDamage;
@@ -36,10 +51,11 @@ function reconstructSteps(game: GameDoc, turns: TurnDoc[]): Step[] {
     const beforeTerrain: Terrain = { width: game.terrain.width, heights: heights.slice() };
 
     const newHeights = heights.slice();
-    for (const d of turn.resolution.terrainDiff) newHeights[d.x] = d.newHeight;
-
     const newHp = { ...hp };
-    for (const d of turn.resolution.damage) newHp[d.playerId] = d.newHp;
+    for (const projectile of turn.resolution.projectiles) {
+      for (const d of projectile.terrainDiff) newHeights[d.x] = d.newHeight;
+      for (const d of projectile.damage) newHp[d.playerId] = d.newHp;
+    }
     for (const f of turn.resolution.tankFalls) {
       if (f.fallDamage > 0) {
         newHp[f.playerId] = Math.max(0, (newHp[f.playerId] ?? 0) - f.fallDamage);
@@ -78,9 +94,16 @@ export default function ReplayOverlay({ game, turns, mySlot, onDone }: Props) {
     const step = steps[index];
     setActiveShot({
       preImpactTerrain: step.beforeTerrain,
-      trajectory: step.turn.resolution.trajectory,
+      projectiles: step.turn.resolution.projectiles.map((p) => ({
+        trajectory: p.trajectory,
+        tickCount: p.tickCount,
+        startTick: p.startTick,
+        impact: p.impact,
+        terrainDiff: p.terrainDiff,
+      })),
       actingSlot: step.turn.actingSlot,
       angle: step.turn.action.angle,
+      projectileStyle: getWeapon(step.turn.action.weaponId).projectileStyle,
       onComplete: () => setIndex((i) => i + 1),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -122,7 +145,7 @@ export default function ReplayOverlay({ game, turns, mySlot, onDone }: Props) {
   const actingPlayer = game.players[step.turn.actingSlot];
   const actorLabel =
     actingPlayer.displayName ?? (step.turn.actingSlot === mySlot ? "You" : "Your opponent");
-  const missed = !step.turn.resolution.impact;
+  const missed = !turnHadAnyImpact(step.turn.resolution);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 px-4 py-8">

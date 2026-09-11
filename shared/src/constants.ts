@@ -12,7 +12,7 @@ export const TRAJECTORY_SAMPLE_COUNT = 30; // points stored/replayed per shot
 export const WIND_MAX = 40; // signed horizontal acceleration, randomized each turn in [-WIND_MAX, WIND_MAX]
 
 export const STARTING_HP = 100;
-export const STARTING_CURRENCY = 150;
+export const STARTING_CURRENCY = 1000;
 
 export const TANK_START_MARGIN_RATIO = 0.15; // tanks start this fraction in from each edge
 export const TANK_WIDTH = 24; // used for splash-distance and rendering, in board units
@@ -24,3 +24,7 @@ export const MIN_ANGLE = 0;
 export const MAX_ANGLE = 180;
 export const MIN_POWER = 0;
 export const MAX_POWER = 100;
+
+// "split" projectile weapons (e.g. cluster bombs): minimum ticks of ascent before a split is
+// allowed, so a very flat shot doesn't split at the muzzle.
+export const MIN_SPLIT_TICKS = 10;

@@ -33,6 +33,13 @@ export function listStoredGameIds(): string[] {
   return Object.keys(readAll());
 }
 
+export function listStoredGames(): Array<{ gameId: string; token: string }> {
+  return Object.entries(readAll()).map(([gameId, identity]) => ({
+    gameId,
+    token: identity.token,
+  }));
+}
+
 export function saveGameIdentity(
   gameId: string,
   identity: { token: string; slot: 0 | 1 },
@@ -51,5 +58,11 @@ export function setLastSeenTurnNumber(gameId: string, turnNumber: number): void 
   const existing = all[gameId];
   if (!existing) return;
   existing.lastSeenTurnNumber = turnNumber;
+  writeAll(all);
+}
+
+export function removeGameIdentity(gameId: string): void {
+  const all = readAll();
+  delete all[gameId];
   writeAll(all);
 }
