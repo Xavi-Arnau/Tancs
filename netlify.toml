@@ -4,11 +4,12 @@
   functions = "netlify/functions"
 
 [build.environment]
-  # .env.example is a checked-in template with placeholder values (e.g. MONGODB_DB_NAME's
-  # sample value "tancs_dev") — it can never contain a real secret, but Netlify's build-time
-  # secrets scanner flags it anyway since that placeholder happens to match the real
-  # (non-secret) MONGODB_DB_NAME value set on this site. Excluding just this one file keeps
-  # the scanner active for everything else.
+  # .env.example is a checked-in template with placeholder values — it can never contain a
+  # real secret, but Netlify's build-time secrets scanner still checks it against whatever
+  # env vars happen to be set on the site. Excluding it keeps the scanner active everywhere
+  # else. (Note for future edits to this file: avoid typing any real env var's actual value
+  # here, even in a comment — the scanner isn't limited to .env.example, it checks every
+  # file, including this one.)
   SECRETS_SCAN_OMIT_PATHS = ".env.example"
 
 [functions]
