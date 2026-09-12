@@ -1,4 +1,11 @@
 import {
+  AIRSTRIKE_ALTITUDE_RATIO,
+  AIRSTRIKE_MAX_BOMBS,
+  AIRSTRIKE_MIN_BOMBS,
+  AIRSTRIKE_MIN_RELEASE_GAP_TICKS,
+  AIRSTRIKE_RELEASE_WINDOW_END,
+  AIRSTRIKE_RELEASE_WINDOW_START,
+  BOARD_HEIGHT,
   BOUNCE_FRICTION,
   BOUNCE_RESTITUTION,
   GRAVITY,
@@ -7,6 +14,7 @@ import {
   POWER_TO_VELOCITY,
   SIM_DT,
   SPLIT_FRACTION,
+  TANK_WIDTH,
   TRAJECTORY_SAMPLE_COUNT,
 } from "./constants.js";
 import { heightAt } from "./terrain.js";
@@ -19,14 +27,22 @@ export interface ProjectileSimulationInput {
   power: number; // 0-100
   wind: number; // signed horizontal acceleration
   terrain: Terrain;
+  tankXs: number[]; // every tank's position, so a bounce weapon can detonate early on contact
+  // Only meaningful for "airstrike" weapons — decided once per shot in combat.ts (so the same
+  // values can also be recorded as TurnResolution.airstrikeFlight for the client's cosmetic
+  // plane-pass rendering) rather than re-rolled independently here:
+  airstrikeFromLeft?: boolean;
+  airstrikeTotalTicks?: number;
+  airstrikePlaneSpeed?: number;
 }
 
 export interface ProjectileSegment {
   impact: Point | null; // null if this segment left the board, or (a split's carrier) doesn't land at all
   path: Point[]; // full tick-by-tick path, used to derive a sampled trajectory
+  startTick: number; // ticks into the overall shot's animation when this segment begins
 }
 
-interface TickLoopResult extends ProjectileSegment {
+interface TickLoopResult extends Omit<ProjectileSegment, "startTick"> {
   finalX: number;
   finalY: number;
   finalVx: number;
@@ -49,6 +65,7 @@ function runTickLoop(
   terrain: Terrain,
   maxTicks: number,
   maxBounces = 0,
+  tankXs: number[] = [],
 ): TickLoopResult {
   let x = startX;
   let y = startY;
@@ -70,7 +87,10 @@ function runTickLoop(
 
     const groundHeight = heightAt(terrain, x);
     if (y <= groundHeight) {
-      if (bouncesUsed < maxBounces) {
+      // A bounce that would otherwise skip past a tank detonates there instead — a shell
+      // landing right on a tank shouldn't skip harmlessly over it just because bounces remain.
+      const onTank = tankXs.some((tankX) => Math.abs(x - tankX) <= TANK_WIDTH / 2);
+      if (bouncesUsed < maxBounces && !onTank) {
         // Reflect instead of stopping — snap to the surface first so repeated bounces don't
         // accumulate drift below ground, then lose some energy so it eventually settles.
         y = groundHeight;
@@ -101,7 +121,7 @@ export function simulateParabolic(input: ProjectileSimulationInput): ProjectileS
     input.terrain,
     MAX_SIM_TICKS,
   );
-  return [{ impact: result.impact, path: result.path }];
+  return [{ impact: result.impact, path: result.path, startTick: 0 }];
 }
 
 /**
@@ -126,8 +146,9 @@ export function simulateBounce(
     input.terrain,
     MAX_SIM_TICKS,
     weapon.maxBounces ?? 2,
+    input.tankXs,
   );
-  return [{ impact: result.impact, path: result.path }];
+  return [{ impact: result.impact, path: result.path, startTick: 0 }];
 }
 
 /**
@@ -159,7 +180,7 @@ export function simulateSplit(
   const stopTick = Math.min(splitTick, MAX_SIM_TICKS);
 
   const ascent = runTickLoop(input.startX, input.startY, vx0, vy0, input.wind, input.terrain, stopTick);
-  const carrierSegment: ProjectileSegment = { impact: ascent.impact, path: ascent.path };
+  const carrierSegment: ProjectileSegment = { impact: ascent.impact, path: ascent.path, startTick: 0 };
 
   if (ascent.ticksRun < stopTick) {
     // The shot's natural flight was shorter than MIN_SPLIT_TICKS (e.g. point-blank) — no room
@@ -188,7 +209,7 @@ export function simulateSplit(
         input.terrain,
         remainingTicks,
       );
-      return { impact: result.impact, path: result.path };
+      return { impact: result.impact, path: result.path, startTick: ascent.ticksRun };
     });
   } else {
     const revealTicks = weapon.splitRevealTicks ?? 12;
@@ -197,11 +218,60 @@ export function simulateSplit(
       const fvx = (point.dx * directionSign - 0.5 * input.wind * tStar * tStar) / tStar;
       const fvy = (point.dy + 0.5 * GRAVITY * tStar * tStar) / tStar;
       const result = runTickLoop(ascent.finalX, ascent.finalY, fvx, fvy, input.wind, input.terrain, remainingTicks);
-      return { impact: result.impact, path: result.path };
+      return { impact: result.impact, path: result.path, startTick: ascent.ticksRun };
     });
   }
 
   return [carrierSegment, ...fragments];
+}
+
+/**
+ * A self-cast weapon (heal/shield) never actually flies — it's applied directly to the
+ * caster regardless of aim. Returns a degenerate segment landing right where the caster
+ * stands: a 2-point identical path (so tickCount = 1, not 0, avoiding a 0/0 in the client's
+ * per-tick animation-progress math) with an immediate impact.
+ */
+function simulateInstant(input: ProjectileSimulationInput): ProjectileSegment[] {
+  const point = { x: input.startX, y: input.startY };
+  return [{ impact: point, path: [point, point], startTick: 0 }];
+}
+
+/**
+ * An unaimed strafing run: ignores angle/power/startX/startY entirely. fromLeft/totalTicks/
+ * planeSpeed are decided once per shot by the caller (combat.ts) rather than rolled here, so
+ * the same values can be recorded as cosmetic metadata for the client's plane-pass animation.
+ * Drops a random number of bombs (AIRSTRIKE_MIN_BOMBS..AIRSTRIKE_MAX_BOMBS) one at a time,
+ * each released at wherever the plane is at that moment (within the middle portion of its
+ * pass, spaced apart by at least AIRSTRIKE_MIN_RELEASE_GAP_TICKS), then falls under real
+ * gravity/wind while keeping the plane's own horizontal speed — a diagonal, physical drop,
+ * not a rigid pattern spawned at rest.
+ */
+export function simulateAirstrike(input: ProjectileSimulationInput): ProjectileSegment[] {
+  const fromLeft = input.airstrikeFromLeft ?? true;
+  const planeSpeed = input.airstrikePlaneSpeed ?? 0;
+  const totalTicks = input.airstrikeTotalTicks ?? 0;
+  const directionSign = fromLeft ? 1 : -1;
+  const edgeX = fromLeft ? 0 : input.terrain.width - 1;
+  const altitude = AIRSTRIKE_ALTITUDE_RATIO * BOARD_HEIGHT;
+
+  const bombCount =
+    AIRSTRIKE_MIN_BOMBS + Math.floor(Math.random() * (AIRSTRIKE_MAX_BOMBS - AIRSTRIKE_MIN_BOMBS + 1));
+  const windowStart = Math.round(totalTicks * AIRSTRIKE_RELEASE_WINDOW_START);
+  const windowEnd = Math.round(totalTicks * AIRSTRIKE_RELEASE_WINDOW_END);
+
+  const releaseTicks: number[] = [];
+  let cursor = windowStart;
+  for (let i = 0; i < bombCount && cursor <= windowEnd; i++) {
+    releaseTicks.push(cursor);
+    cursor += AIRSTRIKE_MIN_RELEASE_GAP_TICKS + Math.floor(Math.random() * AIRSTRIKE_MIN_RELEASE_GAP_TICKS);
+  }
+
+  return releaseTicks.map((releaseTick): ProjectileSegment => {
+    const releaseX = edgeX + directionSign * planeSpeed * (releaseTick * SIM_DT);
+    const vx = directionSign * planeSpeed;
+    const result = runTickLoop(releaseX, altitude, vx, 0, input.wind, input.terrain, MAX_SIM_TICKS);
+    return { impact: result.impact, path: result.path, startTick: releaseTick };
+  });
 }
 
 const projectileSimulators: Record<
@@ -211,6 +281,8 @@ const projectileSimulators: Record<
   parabolic: simulateParabolic,
   split: simulateSplit,
   bounce: simulateBounce,
+  instant: simulateInstant,
+  airstrike: simulateAirstrike,
 };
 
 export function simulateProjectile(

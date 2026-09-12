@@ -1,11 +1,11 @@
-import { getWeapon, WIND_MAX } from "@tancs/shared";
+import { getTankClass, getWeapon, maxHpFor, WIND_MAX } from "@tancs/shared";
 import type { Context } from "@netlify/functions";
 import { requireAuth } from "./_lib/auth.js";
 import { resolveCpuTurn } from "./_lib/cpuTurn.js";
 import { withDb } from "./_lib/db.js";
 import type { GameRecord, TurnRecord } from "./_lib/models.js";
 import { serializeGame } from "./_lib/models.js";
-import { parseJsonBody, requireString } from "./_lib/request.js";
+import { optionalString, parseJsonBody, requireString } from "./_lib/request.js";
 import { errorResponse, HttpError, json } from "./_lib/response.js";
 
 interface PurchaseInput {
@@ -36,6 +36,13 @@ export default async (req: Request, _context: Context): Promise<Response> => {
     const gameId = requireString(body, "gameId");
     const token = requireString(body, "token");
     const purchases = parsePurchases(body.purchases ?? []);
+    const tankClassId = optionalString(body, "tankClassId") ?? "standard";
+    // Validate against the real table rather than trusting the client string as-is —
+    // getTankClass already falls back to "standard" for an unknown id, but we want an
+    // explicit 400 for a bogus id rather than silently defaulting.
+    if (getTankClass(tankClassId).id !== tankClassId) {
+      throw new HttpError(400, `Unknown tank class: ${tankClassId}`);
+    }
 
     return await withDb(async (db) => {
       const auth = await requireAuth(db, token, gameId);
@@ -85,6 +92,10 @@ export default async (req: Request, _context: Context): Promise<Response> => {
             [`${playersPath}.currency`]: player.currency - totalCost,
             [`${playersPath}.inventory`]: inventory,
             [`${playersPath}.readyForBuyPhase`]: true,
+            [`${playersPath}.tankClass`]: tankClassId,
+            // Full heal to the new class's max — valid since buy phase is always pre-battle,
+            // no damage has been taken yet.
+            [`${playersPath}.hp`]: maxHpFor(tankClassId),
             updatedAt: now,
           },
           $inc: { version: 1 },

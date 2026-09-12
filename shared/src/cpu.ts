@@ -4,6 +4,7 @@ import {
   MAX_POWER,
   MIN_ANGLE,
   MIN_POWER,
+  STARTING_HP,
 } from "./constants.js";
 import { simulateProjectile } from "./physics.js";
 import { heightAt } from "./terrain.js";
@@ -17,6 +18,11 @@ const POWER_JITTER = 5;
 const COARSE_ANGLE_STEP = 10;
 const COARSE_POWER_STEP = 10;
 const FINE_STEP = 1;
+
+// Simple heuristics so the CPU doesn't play obviously dumb with utility weapons — not full
+// strategy, just enough to avoid healing at full HP or re-casting an effect that's still active.
+const CPU_REPAIR_HP_THRESHOLD = STARTING_HP * 0.7;
+const CPU_RECAST_MIN_TURNS_REMAINING = 1;
 
 /** A CPU opponent's starting arsenal: a modest stock of every purchasable weapon, so a human
  * playing against it can experience being hit by each weapon type over a session, without
@@ -50,13 +56,30 @@ export function decideCpuAction(params: DecideCpuActionParams): TurnAction {
   const cpu = players[cpuSlot];
   const opponent = players[cpuSlot === 0 ? 1 : 0];
 
-  const candidates = cpu.inventory.filter((e) => e.quantity > 0).map((e) => e.weaponId);
+  const candidates = cpu.inventory
+    .filter((e) => e.quantity > 0)
+    .filter((e) => {
+      const w = getWeapon(e.weaponId);
+      if (w.heal && cpu.hp > CPU_REPAIR_HP_THRESHOLD) return false;
+      if (w.shield && cpu.shield && cpu.shield.turnsRemaining > CPU_RECAST_MIN_TURNS_REMAINING) return false;
+      if (w.freeze && opponent.frozen && opponent.frozen.turnsRemaining > CPU_RECAST_MIN_TURNS_REMAINING) {
+        return false;
+      }
+      return true;
+    })
+    .map((e) => e.weaponId);
   candidates.push("basic_shell");
   const weaponId = candidates[Math.floor(rng() * candidates.length)];
   const weapon = getWeapon(weaponId);
 
   const startX = cpu.tankX;
   const startY = heightAt(terrain, startX) + BARREL_LAUNCH_HEIGHT;
+
+  if (weapon.projectile === "instant") {
+    // Self-cast weapons (Repair/Shield) are angle/power-invariant — skip the aiming search
+    // entirely rather than waste cycles on a result that gets ignored anyway.
+    return { weaponId, angle: MIN_ANGLE, power: MIN_POWER };
+  }
 
   function bestOf(
     angleRange: [number, number],
@@ -69,7 +92,15 @@ export function decideCpuAction(params: DecideCpuActionParams): TurnAction {
     let bestDistance = Infinity;
     for (let angle = angleRange[0]; angle <= angleRange[1]; angle += angleStep) {
       for (let power = powerRange[0]; power <= powerRange[1]; power += powerStep) {
-        const segments = simulateProjectile(weapon, { startX, startY, angle, power, wind, terrain });
+        const segments = simulateProjectile(weapon, {
+          startX,
+          startY,
+          angle,
+          power,
+          wind,
+          terrain,
+          tankXs: [cpu.tankX, opponent.tankX],
+        });
         const impact = segments[segments.length - 1].impact;
         if (!impact) continue;
         const distance = Math.abs(impact.x - opponent.tankX);

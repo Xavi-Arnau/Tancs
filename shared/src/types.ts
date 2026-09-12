@@ -1,4 +1,4 @@
-export type ProjectileType = "parabolic" | "split" | "bounce";
+export type ProjectileType = "parabolic" | "split" | "bounce" | "instant" | "airstrike";
 
 export interface SplitPatternPoint {
   dx: number; // target offset from the split point, board units
@@ -21,12 +21,37 @@ export interface WeaponDefinition {
   splitPattern?: SplitPatternPoint[]; // one fragment per point, in this exact order
   splitRevealTicks?: number; // ticks after the split when the pattern should be fully "revealed" (ignored by "drop" mode)
   splitMode?: "trajectory" | "drop"; // "trajectory" (default): solve a velocity to reach the pattern point, then keep flying. "drop": spawn directly at the pattern point at rest and fall straight down (wind ignored), so the whole pattern stays rigid while falling.
-  projectileStyle?: "flame"; // client rendering hint for this weapon's projectiles; defaults to a plain shell look
+  projectileStyle?: "flame" | "bomb"; // client rendering hint for this weapon's projectiles; defaults to a plain shell look
+  // Tint for the projectile's dot+trail while in flight (non-flame styles only); defaults to
+  // the standard dark shell color when unset — opt-in per weapon, not applied automatically:
+  projectileColor?: string;
   // Only meaningful when projectile === "bounce":
   maxBounces?: number; // how many times it skips off terrain before its final, real impact
   // Persistent hazard this weapon leaves behind at its impact point, ticking damage each
-  // subsequent turn until it expires (see HazardZone):
-  hazard?: { damagePerTurn: number; turns: number };
+  // subsequent turn until it expires (see HazardZone). growPerTurn (optional) widens the
+  // zone's startX/endX a little further each tick, for a pool that spreads over its lifetime.
+  // sinkPerTurn (optional) lowers the terrain under the zone a little further each tick, for a
+  // pool that eats into the ground instead of (or as well as) spreading sideways. corrode
+  // (optional) inflicts a stacking-refresh vulnerability status (see PlayerState.corroded) on
+  // whoever the zone damages on its tick:
+  hazard?: {
+    damagePerTurn: number;
+    turns: number;
+    growPerTurn?: number;
+    sinkPerTurn?: number;
+    corrode?: { amplify: number; turns: number };
+  };
+  // Self-cast utility effects (only meaningful when projectile === "instant" — no real
+  // flight, applied directly to the caster regardless of aim):
+  heal?: number; // flat HP restored to the caster, capped at STARTING_HP
+  shield?: { reduction: number; turns: number }; // reduction is a 0-1 fraction of incoming damage negated
+  // Inflicted on any opposing player caught in this weapon's splash — locks their aim angle
+  // to whatever they last fired at (power and firing are unaffected) for `turns` game-turns:
+  freeze?: { turns: number };
+  // Inflicted on ANY player caught in this weapon's splash (including the caster, unlike
+  // freeze) — a low-damage-per-turn burn that ticks on the burning player's own turns only,
+  // same reasoning as terrain hazard zones:
+  burn?: { damagePerTurn: number; turns: number };
 }
 
 export interface Point {
@@ -57,6 +82,16 @@ export interface PlayerState {
   inventory: InventoryEntry[];
   lastAngle: number; // last angle this tank fired at (or its initial facing), for rendering
   displayName: string | null;
+  shield: { reduction: number; turnsRemaining: number } | null;
+  frozen: { turnsRemaining: number } | null; // aim angle locked to lastAngle while active
+  burning: { damagePerTurn: number; turnsRemaining: number } | null;
+  // Vulnerability inflicted by standing in a corrosive hazard zone (Vat of Acid) — amplifies
+  // ALL incoming damage by this fraction while active (see applyDamage in combat.ts):
+  corroded: { amplify: number; turnsRemaining: number } | null;
+  // Chosen during buy phase (see TANK_CLASSES in tankClasses.ts) — affects this player's own
+  // max HP and outgoing splash damage. Defaults to "standard" (no bonuses/drawbacks) until
+  // buy-weapons.mts sets it from the player's actual pick.
+  tankClass: string;
 }
 
 export interface Terrain {
@@ -66,13 +101,18 @@ export interface Terrain {
 
 // A persistent, multi-turn hazard (e.g. Magma Strike's lava pool) — any tank whose column
 // falls within [startX, endX] takes damagePerTurn every turn until turnsRemaining hits 0.
-// A freshly created zone is NOT ticked the turn it's created (see combat.ts).
+// A freshly created zone is NOT ticked the turn it's created (see combat.ts). growPerTurn
+// (e.g. Vat of Acid), if set, widens startX/endX a little further on every subsequent tick.
 export interface HazardZone {
   id: string;
   startX: number;
   endX: number;
   damagePerTurn: number;
   turnsRemaining: number;
+  growPerTurn?: number;
+  sinkPerTurn?: number; // widens the zone's depth into the ground instead of (or alongside) its width
+  corrode?: { amplify: number; turns: number }; // inflicted on whoever the zone damages each tick
+  color?: string; // hex, from the creating weapon's own `color` — lets the pool render distinctly per weapon
 }
 
 export interface GameDoc {
@@ -125,6 +165,21 @@ export interface ProjectileEvent {
   damage: DamageEntry[];
 }
 
+export type SelfEffectEntry =
+  | { playerId: string; type: "heal"; amount: number }
+  | { playerId: string; type: "shield"; reduction: number; turns: number };
+
+export type StatusInflictedEntry =
+  | { playerId: string; type: "frozen"; turns: number }
+  | { playerId: string; type: "burning"; damagePerTurn: number; turns: number }
+  | { playerId: string; type: "corroded"; amplify: number; turns: number };
+
+export interface StatusExpiredEntry {
+  playerId: string;
+  type: "shield" | "frozen" | "burning" | "corroded";
+  priorTurnsRemaining: number; // what it was right before this turn's decrement — lets replay recover it
+}
+
 export interface TurnResolution {
   wind: number;
   // One element for a normal single-shell weapon; for a "split" weapon, the carrier segment
@@ -135,9 +190,24 @@ export interface TurnResolution {
   // Damage from hazard zones that existed BEFORE this turn, ticked at its start (before the
   // fired shot resolves) — independent of any projectile, since it isn't tied to an impact.
   hazardDamage: DamageEntry[];
+  // Terrain changes from hazard zones sinking (HazardZone.sinkPerTurn) at the same point in
+  // the turn as hazardDamage — independent of any projectile's own terrainDiff.
+  hazardTerrainDiff: TerrainDiffEntry[];
   // The zone (if any) this turn's fired shot spawned — null if the weapon has no `hazard`
   // config or its shot didn't impact. Not yet ticked; that starts next turn.
   hazardZoneCreated: HazardZone | null;
+  // Damage from the acting player's own `burning` status ticking, same timing as hazardDamage
+  // (start of turn) but tied to the player rather than a terrain position.
+  burnDamage: DamageEntry[];
+  // This turn's own self-cast heal/shield (weapon.heal / weapon.shield), if any.
+  selfEffect: SelfEffectEntry | null;
+  // Freeze/burn effects this turn's shot inflicted on whoever it splashed.
+  statusInflicted: StatusInflictedEntry[];
+  // Shield/frozen/burning statuses that existed BEFORE this turn and expired from this turn's tick.
+  statusExpired: StatusExpiredEntry[];
+  // Set only when this turn's weapon is an "airstrike" — purely cosmetic metadata for the
+  // plane's full-map pass, independent of any individual bomb's own trajectory/timing.
+  airstrikeFlight: { fromLeft: boolean; totalTicks: number } | null;
   resultingGameStatus: GameStatus;
 }
 

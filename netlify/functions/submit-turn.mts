@@ -4,6 +4,7 @@ import {
   MAX_POWER,
   MIN_ANGLE,
   MIN_POWER,
+  resolveEffectiveAngle,
   resolveShot,
   WIND_MAX,
 } from "@tancs/shared";
@@ -62,17 +63,21 @@ export default async (req: Request, _context: Context): Promise<Response> => {
       }
 
       const newTurnNumber = game.turnCount + 1;
+      // Frozen players are forced to keep firing at their last angle, regardless of what the
+      // client requested (a stale/frozen client might still send a different one) — this is
+      // the authoritative source of truth for what actually fires and what gets persisted.
+      const effectiveAngle = resolveEffectiveAngle(player, angle);
 
       const result = resolveShot({
         terrain: game.terrain,
         players: game.players,
         wind: game.wind,
         actingSlot: auth.slot,
-        action: { weaponId, angle, power },
+        action: { weaponId, angle: effectiveAngle, power },
         hazards: game.hazards ?? [],
         turnNumber: newTurnNumber,
       });
-      result.players[auth.slot].lastAngle = angle;
+      result.players[auth.slot].lastAngle = effectiveAngle;
 
       const nextTurnPlayerIndex: 0 | 1 =
         result.resolution.resultingGameStatus === "game_over"
@@ -133,7 +138,7 @@ export default async (req: Request, _context: Context): Promise<Response> => {
         turnNumber: newTurnNumber,
         actingPlayerId: auth.playerIdStr,
         actingSlot: auth.slot,
-        action: { weaponId, angle, power },
+        action: { weaponId, angle: effectiveAngle, power },
         resolution: result.resolution,
         createdAt: now,
       };

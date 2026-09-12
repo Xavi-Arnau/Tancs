@@ -45,5 +45,10 @@ export function createPlayerState(
     inventory: defaultInventory(),
     lastAngle: slot === 0 ? 45 : 135, // face the opponent before either tank has fired
     displayName,
+    shield: null,
+    frozen: null,
+    burning: null,
+    corroded: null,
+    tankClass: "standard",
   };
 }

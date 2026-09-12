@@ -6,3 +6,4 @@ export * from "./physics.js";
 export * from "./combat.js";
 export * from "./setup.js";
 export * from "./cpu.js";
+export * from "./tankClasses.js";

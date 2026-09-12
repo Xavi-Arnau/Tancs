@@ -4,6 +4,16 @@ import { XIcon } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createGame, getGameSummaries } from "@/api/games";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +42,7 @@ export default function LobbyView() {
   const [storedGames, setStoredGames] = useState(() => listStoredGames());
   const [displayName, setDisplayName] = useState("");
   const [vsCpu, setVsCpu] = useState(false);
+  const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
 
   const summariesQuery = useQuery({
     queryKey: ["gameSummaries", storedGames.map((g) => g.gameId)],
@@ -59,15 +70,11 @@ export default function LobbyView() {
     },
   });
 
-  function handleRemove(gameId: string) {
-    const confirmed = window.confirm(
-      "Remove this game from your list? You won't be able to access it from this device anymore. " +
-        "Only do this for games that are already finished (or abandoned) — if it's still in " +
-        "progress, your opponent will be left waiting for a turn that will never come.",
-    );
-    if (!confirmed) return;
-    removeGameIdentity(gameId);
-    setStoredGames((games) => games.filter((g) => g.gameId !== gameId));
+  function confirmRemove() {
+    if (!pendingRemoveId) return;
+    removeGameIdentity(pendingRemoveId);
+    setStoredGames((games) => games.filter((g) => g.gameId !== pendingRemoveId));
+    setPendingRemoveId(null);
   }
 
   return (
@@ -169,7 +176,7 @@ export default function LobbyView() {
                     variant="ghost"
                     size="icon-sm"
                     aria-label="Remove game from list"
-                    onClick={() => handleRemove(gameId)}
+                    onClick={() => setPendingRemoveId(gameId)}
                   >
                     <XIcon />
                   </Button>
@@ -179,6 +186,26 @@ export default function LobbyView() {
           </CardContent>
         </Card>
       )}
+
+      <AlertDialog
+        open={pendingRemoveId !== null}
+        onOpenChange={(open) => !open && setPendingRemoveId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this game?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You won't be able to access it from this device anymore. Only do this for games
+              that are already finished (or abandoned) — if it's still in progress, your
+              opponent will be left waiting for a turn that will never come.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmRemove}>Remove</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

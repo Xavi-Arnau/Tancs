@@ -1,5 +1,6 @@
 import {
   decideCpuAction,
+  resolveEffectiveAngle,
   resolveShot,
   WIND_MAX,
   type GameStatus,
@@ -37,12 +38,18 @@ export interface ResolveCpuTurnResult {
  * to go first) and submit-turn.mts (after the human's own shot hands the turn to the CPU).
  */
 export function resolveCpuTurn(params: ResolveCpuTurnParams): ResolveCpuTurnResult {
-  const action = decideCpuAction({
+  const decided = decideCpuAction({
     terrain: params.terrain,
     players: params.players,
     wind: params.wind,
     cpuSlot: 1,
   });
+  // Same authoritative substitution as submit-turn.mts — a frozen CPU must keep firing at its
+  // last angle too, regardless of what decideCpuAction picked.
+  const action: TurnAction = {
+    ...decided,
+    angle: resolveEffectiveAngle(params.players[1], decided.angle),
+  };
 
   const result = resolveShot({
     terrain: params.terrain,

@@ -44,8 +44,9 @@ export function buyWeapons(
   gameId: string,
   token: string,
   purchases: { weaponId: string; quantity: number }[],
+  tankClassId: string,
 ): Promise<BuyWeaponsResponse> {
-  return apiPost("buy-weapons", { gameId, token, purchases });
+  return apiPost("buy-weapons", { gameId, token, purchases, tankClassId });
 }
 
 export interface SubmitTurnResponse {

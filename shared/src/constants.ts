@@ -40,3 +40,12 @@ export const SPLIT_FRACTION = 0.88;
 // bounce off terrain (< 1 so it loses energy and eventually settles instead of bouncing forever).
 export const BOUNCE_RESTITUTION = 0.6; // vy retained per bounce
 export const BOUNCE_FRICTION = 0.85; // vx retained per bounce
+
+// "airstrike" projectile weapons: an unaimed plane pass dropping several bombs one at a time.
+export const AIRSTRIKE_ALTITUDE_RATIO = 0.95; // fraction of BOARD_HEIGHT — comfortably above the tallest possible terrain (0.85) so bombs always get real fall time
+export const AIRSTRIKE_PLANE_SPEED_BASE = 220; // units/sec, before per-shot random variance
+export const AIRSTRIKE_MIN_BOMBS = 5;
+export const AIRSTRIKE_MAX_BOMBS = 8;
+export const AIRSTRIKE_RELEASE_WINDOW_START = 0.2; // bombs only release during the middle
+export const AIRSTRIKE_RELEASE_WINDOW_END = 0.8; // portion of the pass, one at a time
+export const AIRSTRIKE_MIN_RELEASE_GAP_TICKS = 10; // plus a random 0-10 more between each
