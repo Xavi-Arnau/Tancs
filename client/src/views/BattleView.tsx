@@ -230,27 +230,38 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen, onAn
           <CardTitle className="text-base">Fire</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          {/* Fixed 5-column grid, not flex-wrap: MAX_DISTINCT_WEAPONS (4) plus the always-present
-              Basic Shell means there are never more than 5 buttons, so this always fits in one
-              row at any width instead of wrapping unevenly on a phone. min-w-0 lets each button
-              shrink below its content's intrinsic width — the Button component's own base
-              classes set shrink-0/whitespace-nowrap, which otherwise force the grid track wider
-              than its fr share; whitespace-normal on the labels overrides that inherited
-              nowrap so long weapon names wrap onto a second line instead of overflowing. */}
-          <div className="grid grid-cols-5 gap-1.5">
+          {/* Small fixed-size buttons, not a stretched grid — a grid column sized to 1/5 of the
+              card grows huge (and looks sparse/blocky) on a wide desktop card; a fixed size stays
+              a compact, consistent icon button at any viewport. flex-wrap is just a safety net:
+              MAX_DISTINCT_WEAPONS (4) plus the always-present Basic Shell means at most 5
+              buttons, and 5 * size-12 + 4 gaps (~256px) comfortably clears a phone's ~295px
+              content width even after the page's own px-4 and CardContent's px-6 — size-14 was
+              tried first but measured as wrapping to a second line at that same width, so this
+              is the largest size confirmed to reliably fit in one row. Icon + ammo only, no name
+              label — a per-weapon color tint (same technique as BuyPhaseView's WeaponIcon) plus
+              the selected-state's stronger tint/border are enough to tell them apart at a
+              glance; the full name is still available via the native title tooltip. Color always
+              comes from an inline style, not a Tailwind class, since it's per-weapon data rather
+              than a fixed set of classes. */}
+          <div className="flex flex-wrap gap-1">
             {availableWeapons.map((w) => {
               const Icon = getWeaponIcon(w.icon);
+              const isSelected = weaponId === w.id;
               return (
                 <Button
                   key={w.id}
-                  variant={weaponId === w.id ? "default" : "outline"}
+                  variant="outline"
                   disabled={!isMyTurn}
                   onClick={() => setWeaponId(w.id)}
-                  className="h-24 min-w-0 flex-col gap-1 p-1"
+                  title={w.name}
+                  className="size-12 flex-col gap-0.5 border-2 p-1"
+                  style={{
+                    backgroundColor: `${w.color}${isSelected ? "26" : "12"}`,
+                    borderColor: isSelected ? w.color : `${w.color}40`,
+                  }}
                 >
-                  <Icon className="size-7 shrink-0" style={{ color: w.color }} />
-                  <span className="w-full whitespace-normal break-words text-center text-xs font-medium leading-tight">{w.name}</span>
-                  <span className="whitespace-normal text-[10px] leading-tight opacity-75">{ammoLabel(w.id)}</span>
+                  <Icon className="size-5 shrink-0" style={{ color: w.color }} />
+                  <span className="text-[10px] leading-tight opacity-75">{ammoLabel(w.id)}</span>
                 </Button>
               );
             })}
