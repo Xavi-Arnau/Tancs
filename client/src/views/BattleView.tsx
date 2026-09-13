@@ -53,6 +53,17 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen, onAn
   const [power, setPower] = useState(() => getLastShot(gameId)?.power ?? 50);
   const [activeShot, setActiveShot] = useState<ActiveShot | null>(null);
 
+  // While a shot is animating, never read HP straight from the live `game` prop for the
+  // summary line below the canvas — in a vs-CPU game, the CPU's reply turn is resolved and
+  // persisted server-side in the very same write as this shot's own turn (see
+  // submit-turn.mts), so a background poll landing mid-animation would otherwise hand us HP
+  // that already reflects the CPU's reply, several seconds before that turn is ever animated
+  // (most visible during a Balloon flight, where the number would drop while still airborne).
+  // Same principle as TerrainCanvas's own resolveHp; this DOM line just isn't rendered by it.
+  const activeShotPreImpactPlayers = activeShot?.preImpactPlayers;
+  const displayedMeHp = activeShotPreImpactPlayers?.find((p) => p.playerId === me.playerId)?.hp ?? me.hp;
+  const displayedOpponentHp = activeShotPreImpactPlayers?.find((p) => p.playerId === opponent.playerId)?.hp ?? opponent.hp;
+
   // Tracks the game.version we last previewed the start-of-turn tick for, so a background poll
   // (or any other re-render while it's still my turn) doesn't replay the same preview twice.
   // Resets naturally on remount — e.g. after ReplayOverlay hands control back for a new turn.
@@ -210,8 +221,8 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen, onAn
       />
 
       <div className="flex justify-between text-sm">
-        <span>{me.displayName ?? "You"}: {me.hp} HP</span>
-        <span>{opponent.displayName ?? "Opponent"}: {opponent.hp} HP</span>
+        <span>{me.displayName ?? "You"}: {displayedMeHp} HP</span>
+        <span>{opponent.displayName ?? "Opponent"}: {displayedOpponentHp} HP</span>
       </div>
 
       <Card>

@@ -317,18 +317,8 @@ export function resolveShot(params: ResolveShotParams): ResolveShotResult {
     );
     caster.tankX = toX;
     selfEffect = { playerId: caster.playerId, type: "reposition", fromX, toX };
-
-    // Own fall-damage check, independent of the generic tankFalls loop below (which only
-    // detects terrain collapsing under a STATIONARY tank) — Balloon moves tankX itself and
-    // carves no terrain, so that loop is a guaranteed no-op for this turn; compare the
-    // original x to the new x on the same (Balloon-unmodified) terrain instead.
-    const fromY = heightAt(tick.terrain, fromX);
-    const toY = heightAt(tick.terrain, toX);
-    if (toY < fromY) {
-      const fallDamage = Math.round((fromY - toY) * FALL_DAMAGE_PER_UNIT);
-      if (fallDamage > 0) caster.hp = Math.max(0, caster.hp - fallDamage);
-      tankFalls.push({ playerId: caster.playerId, fromY, toY, fallDamage });
-    }
+    // A balloon always lands soft — no fall-damage check here, regardless of how much lower
+    // the landing spot is, and independent of FALL_DAMAGE_PER_UNIT's own value.
   }
 
   const preShotTerrain = tick.terrain;

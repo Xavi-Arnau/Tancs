@@ -1,5 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
+import { resolveCpuTurn } from "@/api/games";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getGameIdentity } from "@/identity/playerToken";
 import { useGameState } from "@/hooks/useGameState";
@@ -38,14 +39,41 @@ export default function GameView() {
   const { gameId } = useParams<{ gameId: string }>();
   const identity = gameId ? getGameIdentity(gameId) : null;
 
-  const { data, isLoading, error, markSeen } = useGameState(gameId, identity?.token);
+  const { data, isLoading, error, markSeen, refetch } = useGameState(gameId, identity?.token);
   // While the acting player's own shot is still animating in BattleView, hold off switching to
   // GameOverView or ReplayOverlay even once the (quickly-refetched) data says otherwise —
-  // otherwise a later screen preempts the shot before its impact is even shown. This matters
-  // most against a CPU opponent: its reply turn is resolved synchronously, in the same request
-  // as the player's own shot, so it can already be sitting in the DB (and get polled as an
-  // "unseen" turn) before the player's own animation has even finished.
+  // otherwise a later screen preempts the shot before its impact is even shown. Independent of
+  // the CPU (see the effect below): this also matters for the player's own turn — e.g. a
+  // game-ending shot's outcome can be polled in before its own impact has visually landed.
   const [battleAnimating, setBattleAnimating] = useState(false);
+
+  // The CPU is treated like a real second player: it takes its own turn, as its own write (see
+  // resolve-cpu-turn.mts), rather than having its reply chained into the human's own submit-turn
+  // request. So whenever it's genuinely the CPU's turn and nothing has happened yet, this client
+  // (whichever one happens to be open — including a fresh reload) is the one that nudges it to
+  // play, the same way a live second player would simply act on their own turn. Guarded by a ref
+  // keyed on `game.version` so it fires once per version rather than on every 5s poll while
+  // waiting for the call to land.
+  const triggeredCpuVersionRef = useRef<number | null>(null);
+  const game = data?.game;
+  const newTurns = data?.newTurns ?? [];
+  useEffect(() => {
+    if (!gameId || !identity || !game) return;
+    if (game.mode !== "vs_cpu" || game.status !== "battle_phase") return;
+    if (game.currentTurnPlayerIndex === identity.slot) return; // it's the human's turn
+    if (newTurns.length > 0) return; // the CPU's reply is already here, just not seen yet
+    if (triggeredCpuVersionRef.current === game.version) return;
+    triggeredCpuVersionRef.current = game.version;
+
+    resolveCpuTurn(gameId, identity.token)
+      .then(() => refetch())
+      .catch(() => {
+        // Transient failure — allow a retry on the next render of this same version (e.g. the
+        // next background poll) instead of getting stuck having "used up" this version's attempt.
+        if (triggeredCpuVersionRef.current === game.version) triggeredCpuVersionRef.current = null;
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId, identity, game?.version, game?.mode, game?.status, game?.currentTurnPlayerIndex, newTurns.length]);
 
   let content: ReactNode;
 

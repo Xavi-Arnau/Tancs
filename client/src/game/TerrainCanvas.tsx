@@ -63,9 +63,11 @@ function playSoundCue(kind: SoundCue["kind"]): void {
 }
 
 const PLAYER_COLORS: [string, string] = ["#e5484d", "#3b82f6"]; // slot 0 red, slot 1 blue
-const MS_PER_TICK = 1000 / 60; // real-time-ish playback speed, independent of the physics tick rate
+// Exported so shotAnimation.ts can derive its own hazard-reveal timing from these instead of
+// hand-picking a number that can silently drift out of sync (see HAZARD_PHASE_TICKS there).
+export const MS_PER_TICK = 1000 / 60; // real-time-ish playback speed, independent of the physics tick rate
 const BURST_FADE_MS = 350;
-const POPUP_DURATION_MS = 900;
+export const POPUP_DURATION_MS = 900;
 const CAPTION_DURATION_MS = 1300;
 // A projectile-less shot (the start-of-turn tick preview) has nothing to time its length off
 // of, so it gets this minimum duration instead — long enough for its captions to be readable.
@@ -458,49 +460,72 @@ function drawAirplane(ctx: CanvasRenderingContext2D, x: number, y: number, facin
   ctx.restore();
 }
 
-/** A small procedurally-drawn balloon envelope + basket, connected to the lifted tank by two
- * thin lines — Balloon's shot-level cosmetic overlay while a tank is mid-repositioning, same
+/** One balloon envelope with a single gore-line down its middle for texture — `shade` (0-1)
+ * mixes the base amber toward black, used to make the two rear balloons in a cluster read as
+ * "behind" the front one without changing their hue. */
+function drawBalloonEnvelope(ctx: CanvasRenderingContext2D, cx: number, cy: number, rx: number, ry: number, shade: number) {
+  const [r, g, b] = mixToward([251, 191, 36], [0, 0, 0], shade);
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fillStyle = `rgb(${r},${g},${b})`;
+  ctx.fill();
+  ctx.strokeStyle = `rgba(${Math.max(0, r - 105)},${Math.max(0, g - 90)},${Math.max(0, b - 25)},0.55)`;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - ry);
+  ctx.quadraticCurveTo(cx + rx * 0.6, cy, cx, cy + ry);
+  ctx.stroke();
+}
+
+/** Three overlapping balloon envelopes tied to a single basket, connected to the lifted tank by
+ * two thin lines — Balloon's shot-level cosmetic overlay while a tank is mid-repositioning, same
  * procedural style (no image assets) as drawAirplane/drawBomb. `tankTopScreenY` is the screen Y
- * of the (already-lifted) tank's own top, so the balloon always sits directly above it. */
+ * of the (already-lifted) tank's own top, so the cluster always sits directly above it. Drawn
+ * back-to-front (the two side balloons, then the center one) so the overlap reads correctly. */
 function drawBalloon(ctx: CanvasRenderingContext2D, x: number, tankTopScreenY: number, elapsedMs: number) {
   const sway = Math.sin(elapsedMs * 0.003) * 3;
-  const envelopeRx = 14;
-  const envelopeRy = 18;
   const basketY = tankTopScreenY - 30;
-  const envelopeCenterX = x + sway;
-  const envelopeCenterY = basketY - envelopeRy - 10;
+  const clusterX = x + sway;
+  const clusterY = basketY - 31;
 
   ctx.strokeStyle = "#5c4426";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(x - 6, tankTopScreenY);
-  ctx.lineTo(envelopeCenterX - 5, basketY + 6);
+  ctx.lineTo(clusterX - 5, basketY + 6);
   ctx.moveTo(x + 6, tankTopScreenY);
-  ctx.lineTo(envelopeCenterX + 5, basketY + 6);
+  ctx.lineTo(clusterX + 5, basketY + 6);
   ctx.stroke();
 
   ctx.fillStyle = "#92795a";
-  ctx.fillRect(envelopeCenterX - 8, basketY - 6, 16, 12);
+  ctx.fillRect(clusterX - 8, basketY - 6, 16, 12);
 
+  const centerCx = clusterX;
+  const centerCy = clusterY - 3;
+  const centerRx = 12;
+  const centerRy = 16;
+  const sideRx = 9;
+  const sideRy = 12;
+  const leftCx = clusterX - 9;
+  const leftCy = clusterY + 5;
+  const rightCx = clusterX + 9;
+  const rightCy = clusterY + 5;
+
+  // Support lines from the basket to each envelope, drawn before the envelopes so the ends
+  // tuck underneath instead of poking out on top.
+  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(envelopeCenterX - 6, basketY - 6);
-  ctx.lineTo(envelopeCenterX - 5, envelopeCenterY + envelopeRy - 3);
-  ctx.moveTo(envelopeCenterX + 6, basketY - 6);
-  ctx.lineTo(envelopeCenterX + 5, envelopeCenterY + envelopeRy - 3);
+  ctx.moveTo(clusterX - 6, basketY - 6);
+  ctx.lineTo(leftCx, leftCy + sideRy - 2);
+  ctx.moveTo(clusterX + 6, basketY - 6);
+  ctx.lineTo(rightCx, rightCy + sideRy - 2);
+  ctx.moveTo(clusterX, basketY - 6);
+  ctx.lineTo(centerCx, centerCy + centerRy - 2);
   ctx.stroke();
 
-  ctx.beginPath();
-  ctx.ellipse(envelopeCenterX, envelopeCenterY, envelopeRx, envelopeRy, 0, 0, Math.PI * 2);
-  ctx.fillStyle = "#fbbf24";
-  ctx.fill();
-  ctx.strokeStyle = "rgba(146,105,10,0.5)";
-  ctx.lineWidth = 1;
-  for (const dx of [-7, 0, 7]) {
-    ctx.beginPath();
-    ctx.moveTo(envelopeCenterX + dx * 0.6, envelopeCenterY - envelopeRy);
-    ctx.quadraticCurveTo(envelopeCenterX + dx, envelopeCenterY, envelopeCenterX + dx * 0.6, envelopeCenterY + envelopeRy);
-    ctx.stroke();
-  }
+  drawBalloonEnvelope(ctx, leftCx, leftCy, sideRx, sideRy, 0.18);
+  drawBalloonEnvelope(ctx, rightCx, rightCy, sideRx, sideRy, 0.18);
+  drawBalloonEnvelope(ctx, centerCx, centerCy, centerRx, centerRy, 0);
 }
 
 /** A small procedurally-drawn WW2-style "iron bomb" silhouette — an olive-drab capsule body
@@ -657,6 +682,31 @@ function resolveSelfMove(
   return { x, lift };
 }
 
+/**
+ * Same principle as resolveSelfMove, for HP: baseline is always the shot's own frozen
+ * `preImpactPlayers` snapshot, never the live `players` prop. This matters most for vs-CPU
+ * games, where the CPU's reply turn is resolved and persisted server-side in the very same
+ * write as the player's own turn (see submit-turn.mts) — there's no intermediate database
+ * state representing "my turn happened, the CPU hasn't replied yet." Any refetch that lands
+ * while this shot is still animating (not just its own onComplete's refetch, but any
+ * independent background poll) would otherwise hand the client HP that already reflects the
+ * CPU's reply, revealing it several seconds early — most jarring during a Balloon flight,
+ * where the number visibly drops while the tank is still airborne from a hit that hasn't
+ * "happened" yet from the animation's point of view. Every hp-changing event (heal, hazard,
+ * burn, shot damage) already pushes a DamagePopup, so replaying just this shot's own popups
+ * against the frozen baseline reconstructs the correct in-between values exactly.
+ */
+function resolveHp(shot: ActiveShot | null | undefined, player: PlayerState, elapsedTicks: number): number {
+  if (!shot) return player.hp;
+  const baseHp = shot.preImpactPlayers?.find((p) => p.playerId === player.playerId)?.hp ?? player.hp;
+  let hp = baseHp;
+  for (const popup of shot.damagePopups ?? []) {
+    if (popup.slot !== player.slot || elapsedTicks < popup.triggerTick) continue;
+    hp += popup.source === "heal" ? popup.amount : -popup.amount;
+  }
+  return hp;
+}
+
 export default function TerrainCanvas({ terrain, players, hazards, aim, activeShot }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -709,7 +759,9 @@ export default function TerrainCanvas({ terrain, players, hazards, aim, activeSh
         : isAiming
           ? aimRef.current!.angle
           : player.lastAngle;
-      const renderPlayer = shot ? { ...player, ...playerStatusForShot(shot, player.playerId, elapsedTicks) } : player;
+      const renderPlayer = shot
+        ? { ...player, hp: resolveHp(shot, player, elapsedTicks), ...playerStatusForShot(shot, player.playerId, elapsedTicks) }
+        : player;
       const { x: resolvedX, lift } = resolveSelfMove(shot, player, elapsedTicks);
       drawTank(ctx, renderTerrain, renderPlayer, PLAYER_COLORS[player.slot], barrelAngle, elapsedMs, resolvedX, lift);
     }

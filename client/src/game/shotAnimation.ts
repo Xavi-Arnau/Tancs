@@ -7,7 +7,7 @@ import type {
   TurnStartTickResult,
   WeaponDefinition,
 } from "@tancs/shared";
-import type { ActiveShotProjectile, Caption, DamagePopup } from "./TerrainCanvas";
+import { MS_PER_TICK, POPUP_DURATION_MS, type ActiveShotProjectile, type Caption, type DamagePopup } from "./TerrainCanvas";
 
 export type SoundCueKind =
   | "burnTick"
@@ -30,7 +30,13 @@ export interface SoundCue {
 // look like it came from the shot itself. Only relevant to the "full" build (see buildShotAnimation's
 // `tickAlreadyShown` param) — when the tick was already previewed separately, the shot starts
 // immediately with no offset.
-const HAZARD_PHASE_TICKS = 45;
+// Must be long enough for a hazard-tick damage popup to fully fade (POPUP_DURATION_MS) before
+// the turn's own shot/effect begins its own visuals — otherwise a still-fading damage number
+// can visually overlap the next phase, most noticeably when that phase is a Balloon's own tank
+// visibly lifting off (reads exactly like "took damage while airborne", though the damage was
+// really the unrelated hazard tick). Derived from TerrainCanvas's own constants instead of a
+// hand-picked number so the two can't silently drift out of this relationship again.
+const HAZARD_PHASE_TICKS = Math.ceil(POPUP_DURATION_MS / MS_PER_TICK) + 6;
 
 // A Balloon's drift-flight duration scales with the distance traveled (same principle as Air
 // Strike's plane pass, whose totalTicks derives from distance/speed) so a bigger drift visibly
@@ -255,17 +261,8 @@ export function buildShotAnimation(
 
     const landingTick = startTick + tickCount;
     soundCues.push({ triggerTick: landingTick, kind: "balloonLand" });
-    const fall = resolution.tankFalls.find((f) => f.playerId === playerId);
-    if (fall && fall.fallDamage > 0) {
-      const slot = slotByPlayerId.get(playerId);
-      if (slot !== undefined) popups.push({ slot, amount: fall.fallDamage, triggerTick: landingTick, source: "shot" });
-      captions.push({
-        triggerTick: landingTick,
-        text: isMe ? `${label} take ${fall.fallDamage} fall damage landing` : `${label} takes ${fall.fallDamage} fall damage landing`,
-      });
-    } else {
-      captions.push({ triggerTick: landingTick, text: isMe ? `${label} land safely` : `${label} lands safely` });
-    }
+    // A balloon always lands soft — no fall-damage popup/caption branch here, unconditionally.
+    captions.push({ triggerTick: landingTick, text: isMe ? `${label} land safely` : `${label} lands safely` });
   }
 
   return {

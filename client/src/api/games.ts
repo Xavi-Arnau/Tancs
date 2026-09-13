@@ -64,6 +64,14 @@ export function submitTurn(
   return apiPost("submit-turn", { gameId, token, weaponId, angle, power });
 }
 
+export interface ResolveCpuTurnResponse {
+  game: GameDoc | null;
+}
+
+export function resolveCpuTurn(gameId: string, token: string): Promise<ResolveCpuTurnResponse> {
+  return apiPost("resolve-cpu-turn", { gameId, token });
+}
+
 export interface GameSummariesResponse {
   summaries: GameSummary[];
 }

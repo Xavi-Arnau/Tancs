@@ -1,9 +1,8 @@
 import { getTankClass, getWeapon, MAX_DISTINCT_WEAPONS, maxHpFor, WIND_MAX } from "@tancs/shared";
 import type { Context } from "@netlify/functions";
 import { requireAuth } from "./_lib/auth.js";
-import { resolveCpuTurn } from "./_lib/cpuTurn.js";
 import { withDb } from "./_lib/db.js";
-import type { GameRecord, TurnRecord } from "./_lib/models.js";
+import type { GameRecord } from "./_lib/models.js";
 import { serializeGame } from "./_lib/models.js";
 import { optionalString, parseJsonBody, requireString } from "./_lib/request.js";
 import { errorResponse, HttpError, json } from "./_lib/response.js";
@@ -115,6 +114,9 @@ export default async (req: Request, _context: Context): Promise<Response> => {
       if (finalDoc.players.every((p) => p.readyForBuyPhase)) {
         const startingPlayer: 0 | 1 = Math.random() < 0.5 ? 0 : 1;
         const wind = Math.round((Math.random() * 2 - 1) * WIND_MAX);
+        // If the CPU is chosen to go first, its own move is handled the same way as every
+        // other CPU turn: the client notices it's the CPU's turn and calls resolve-cpu-turn
+        // (see GameView.tsx) — no special-casing needed here.
         const flipped = await db.collection<GameRecord>("games").findOneAndUpdate(
           { _id: game._id, status: "buy_phase", version: finalDoc.version },
           {
@@ -130,51 +132,6 @@ export default async (req: Request, _context: Context): Promise<Response> => {
         );
         if (flipped) {
           finalDoc = flipped;
-
-          if (finalDoc.mode === "vs_cpu" && finalDoc.currentTurnPlayerIndex === 1) {
-            const cpuTurnNumber = finalDoc.turnCount + 1;
-            const cpu = resolveCpuTurn({
-              terrain: finalDoc.terrain,
-              players: finalDoc.players,
-              hazards: finalDoc.hazards ?? [],
-              wind: finalDoc.wind,
-              turnNumber: cpuTurnNumber,
-            });
-
-            const afterCpu = await db.collection<GameRecord>("games").findOneAndUpdate(
-              { _id: game._id, status: "battle_phase", version: finalDoc.version },
-              {
-                $set: {
-                  terrain: cpu.terrain,
-                  players: cpu.players,
-                  hazards: cpu.hazards,
-                  status: cpu.status,
-                  currentTurnPlayerIndex: cpu.currentTurnPlayerIndex,
-                  wind: cpu.wind,
-                  winnerPlayerId: cpu.winnerPlayerId,
-                  updatedAt: new Date(),
-                  turnCount: cpuTurnNumber,
-                },
-                $inc: { version: 1 },
-              },
-              { returnDocument: "after" },
-            );
-
-            if (afterCpu) {
-              finalDoc = afterCpu;
-              const cpuTurnRecord: TurnRecord = {
-                gameId: game._id,
-                round: 1,
-                turnNumber: cpuTurnNumber,
-                actingPlayerId: cpu.players[1].playerId,
-                actingSlot: 1,
-                action: cpu.action,
-                resolution: cpu.resolution,
-                createdAt: new Date(),
-              };
-              await db.collection<TurnRecord>("turns").insertOne(cpuTurnRecord);
-            }
-          }
         }
       }
 
