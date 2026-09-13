@@ -230,7 +230,14 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen, onAn
           <CardTitle className="text-base">Fire</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-wrap gap-2">
+          {/* Fixed 5-column grid, not flex-wrap: MAX_DISTINCT_WEAPONS (4) plus the always-present
+              Basic Shell means there are never more than 5 buttons, so this always fits in one
+              row at any width instead of wrapping unevenly on a phone. min-w-0 lets each button
+              shrink below its content's intrinsic width — the Button component's own base
+              classes set shrink-0/whitespace-nowrap, which otherwise force the grid track wider
+              than its fr share; whitespace-normal on the labels overrides that inherited
+              nowrap so long weapon names wrap onto a second line instead of overflowing. */}
+          <div className="grid grid-cols-5 gap-1.5">
             {availableWeapons.map((w) => {
               const Icon = getWeaponIcon(w.icon);
               return (
@@ -239,11 +246,11 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen, onAn
                   variant={weaponId === w.id ? "default" : "outline"}
                   disabled={!isMyTurn}
                   onClick={() => setWeaponId(w.id)}
-                  className="h-24 w-24 flex-col gap-1 p-2"
+                  className="h-24 min-w-0 flex-col gap-1 p-1"
                 >
-                  <Icon className="size-9" style={{ color: w.color }} />
-                  <span className="text-xs font-medium leading-tight">{w.name}</span>
-                  <span className="text-[10px] leading-tight opacity-75">{ammoLabel(w.id)}</span>
+                  <Icon className="size-7 shrink-0" style={{ color: w.color }} />
+                  <span className="w-full whitespace-normal break-words text-center text-xs font-medium leading-tight">{w.name}</span>
+                  <span className="whitespace-normal text-[10px] leading-tight opacity-75">{ammoLabel(w.id)}</span>
                 </Button>
               );
             })}
