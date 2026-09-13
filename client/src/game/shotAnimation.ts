@@ -16,7 +16,9 @@ export type SoundCueKind =
   | "hazardFormedAcid"
   | "burningInflicted"
   | "corrodedInflicted"
-  | "heartBloom";
+  | "heartBloom"
+  | "balloonLaunch"
+  | "balloonLand";
 
 export interface SoundCue {
   triggerTick: number;
@@ -30,6 +32,12 @@ export interface SoundCue {
 // immediately with no offset.
 const HAZARD_PHASE_TICKS = 45;
 
+// A Balloon's drift-flight duration scales with the distance traveled (same principle as Air
+// Strike's plane pass, whose totalTicks derives from distance/speed) so a bigger drift visibly
+// takes a bit longer to animate rather than snapping instantly to its landing spot.
+const BALLOON_FLIGHT_BASE_TICKS = 40;
+const BALLOON_FLIGHT_TICKS_PER_UNIT = 1.2;
+
 export interface ShotAnimation {
   projectiles: ActiveShotProjectile[];
   damagePopups: DamagePopup[];
@@ -41,6 +49,9 @@ export interface ShotAnimation {
   // Cosmetic full-map plane pass for an "airstrike" weapon — startTick already includes the
   // same pre-shot offset applied to every projectile's own startTick, so it stays in sync.
   airstrikeFlight: { fromLeft: boolean; totalTicks: number; startTick: number } | null;
+  // Cosmetic mid-shot horizontal reposition for a "Balloon"-type self-effect — see TerrainCanvas's
+  // ActiveShot.selfMove for how this drives rendering.
+  selfMove: { playerId: string; fromX: number; toX: number; startTick: number; tickCount: number } | null;
 }
 
 export interface TickAnimation {
@@ -131,6 +142,7 @@ export function buildShotAnimation(
   const popups: DamagePopup[] = [];
   const captions: Caption[] = [];
   const soundCues: SoundCue[] = [];
+  let selfMove: ShotAnimation["selfMove"] = null;
 
   if (!tickAlreadyShown) {
     for (const entry of resolution.hazardDamage) {
@@ -229,6 +241,31 @@ export function buildShotAnimation(
     const triggerTick = firstProjectile ? firstProjectile.startTick + offset + firstProjectile.tickCount : offset;
     const { label, isMe } = subject(players, resolution.selfEffect.playerId, mySlot);
     captions.push({ triggerTick, text: isMe ? `${label} raise a shield` : `${label} raises a shield` });
+  } else if (resolution.selfEffect?.type === "reposition") {
+    const { playerId, fromX, toX } = resolution.selfEffect;
+    const firstProjectile = resolution.projectiles[0];
+    const startTick = firstProjectile ? firstProjectile.startTick + offset + firstProjectile.tickCount : offset;
+    const distance = Math.abs(toX - fromX);
+    const tickCount = Math.round(BALLOON_FLIGHT_BASE_TICKS + distance * BALLOON_FLIGHT_TICKS_PER_UNIT);
+    selfMove = { playerId, fromX, toX, startTick, tickCount };
+    soundCues.push({ triggerTick: startTick, kind: "balloonLaunch" });
+
+    const { label, isMe } = subject(players, playerId, mySlot);
+    captions.push({ triggerTick: startTick, text: isMe ? `${label} ride the wind` : `${label} rides the wind` });
+
+    const landingTick = startTick + tickCount;
+    soundCues.push({ triggerTick: landingTick, kind: "balloonLand" });
+    const fall = resolution.tankFalls.find((f) => f.playerId === playerId);
+    if (fall && fall.fallDamage > 0) {
+      const slot = slotByPlayerId.get(playerId);
+      if (slot !== undefined) popups.push({ slot, amount: fall.fallDamage, triggerTick: landingTick, source: "shot" });
+      captions.push({
+        triggerTick: landingTick,
+        text: isMe ? `${label} take ${fall.fallDamage} fall damage landing` : `${label} takes ${fall.fallDamage} fall damage landing`,
+      });
+    } else {
+      captions.push({ triggerTick: landingTick, text: isMe ? `${label} land safely` : `${label} lands safely` });
+    }
   }
 
   return {
@@ -242,5 +279,6 @@ export function buildShotAnimation(
     airstrikeFlight: resolution.airstrikeFlight
       ? { ...resolution.airstrikeFlight, startTick: offset }
       : null,
+    selfMove,
   };
 }

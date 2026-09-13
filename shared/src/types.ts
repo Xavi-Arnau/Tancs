@@ -21,7 +21,7 @@ export interface WeaponDefinition {
   splitPattern?: SplitPatternPoint[]; // one fragment per point, in this exact order
   splitRevealTicks?: number; // ticks after the split when the pattern should be fully "revealed" (ignored by "drop" mode)
   splitMode?: "trajectory" | "drop"; // "trajectory" (default): solve a velocity to reach the pattern point, then keep flying. "drop": spawn directly at the pattern point at rest and fall straight down (wind ignored), so the whole pattern stays rigid while falling.
-  projectileStyle?: "flame" | "bomb"; // client rendering hint for this weapon's projectiles; defaults to a plain shell look
+  projectileStyle?: "flame" | "bomb" | "balloon"; // client rendering hint for this weapon's projectiles; defaults to a plain shell look
   // Tint for the projectile's dot+trail while in flight (non-flame styles only); defaults to
   // the standard dark shell color when unset — opt-in per weapon, not applied automatically:
   projectileColor?: string;
@@ -45,6 +45,10 @@ export interface WeaponDefinition {
   // flight, applied directly to the caster regardless of aim):
   heal?: number; // flat HP restored to the caster, capped at STARTING_HP
   shield?: { reduction: number; turns: number }; // reduction is a 0-1 fraction of incoming damage negated
+  // Lifts the caster's own tank and drifts it horizontally with the wind before landing (see
+  // BALLOON_MIN_DRIFT/BALLOON_WIND_DRIFT_SCALE in constants.ts and resolveShot's dedicated
+  // branch) — carries no damage/splash of its own:
+  balloon?: true;
   // Inflicted on any opposing player caught in this weapon's splash — locks their aim angle
   // to whatever they last fired at (power and firing are unaffected) for `turns` game-turns:
   freeze?: { turns: number };
@@ -167,7 +171,8 @@ export interface ProjectileEvent {
 
 export type SelfEffectEntry =
   | { playerId: string; type: "heal"; amount: number }
-  | { playerId: string; type: "shield"; reduction: number; turns: number };
+  | { playerId: string; type: "shield"; reduction: number; turns: number }
+  | { playerId: string; type: "reposition"; fromX: number; toX: number };
 
 export type StatusInflictedEntry =
   | { playerId: string; type: "frozen"; turns: number }

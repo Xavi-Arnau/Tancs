@@ -38,6 +38,20 @@ export function reconstructSteps(game: GameDoc, turns: TurnDoc[]): Step[] {
     }
   }
 
+  // tankX has never changed mid-game before Balloon existed, so unlike hp/shield/frozen/etc.
+  // this needs its own reverse-walk seed: start from each player's CURRENT (post-batch) x, and
+  // for any turn in the batch that repositioned them, adopt that turn's `fromX` as the running
+  // value — walking in reverse chronological order so, after the loop, `initialTankX` holds
+  // each player's position from BEFORE the whole batch (the earliest reposition's `fromX`, if
+  // more than one occurred, since later assignments in this reverse walk get overwritten by
+  // earlier ones).
+  const initialTankX: Record<string, number> = {};
+  for (const p of game.players) initialTankX[p.playerId] = p.tankX;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const effect = turns[i].resolution.selfEffect;
+    if (effect?.type === "reposition") initialTankX[effect.playerId] = effect.fromX;
+  }
+
   const initialHp: Record<string, number> = {};
   for (const p of game.players) initialHp[p.playerId] = p.hp;
   for (const turn of turns) {
@@ -59,6 +73,7 @@ export function reconstructSteps(game: GameDoc, turns: TurnDoc[]): Step[] {
 
   let heights = initialHeights;
   let hp: Record<string, number> = { ...initialHp };
+  let tankX: Record<string, number> = { ...initialTankX };
   // Unlike terrain/HP, we can't backward-reconstruct hazard zones turn-by-turn (no "zone
   // expired" event is stored anywhere, only "zone created"), so instead we derive the correct
   // START of this batch from the one state we know is accurate: `game.hazards`, the current
@@ -133,6 +148,7 @@ export function reconstructSteps(game: GameDoc, turns: TurnDoc[]): Step[] {
     const beforeHazards = zones;
     const beforePlayers = game.players.map((p) => ({
       ...p,
+      tankX: tankX[p.playerId],
       hp: hp[p.playerId],
       shield: shield[p.playerId] ?? null,
       frozen: frozen[p.playerId] ?? null,
@@ -157,6 +173,11 @@ export function reconstructSteps(game: GameDoc, turns: TurnDoc[]): Step[] {
       if (f.fallDamage > 0) {
         newHp[f.playerId] = Math.max(0, (newHp[f.playerId] ?? 0) - f.fallDamage);
       }
+    }
+
+    const newTankX = { ...tankX };
+    if (turn.resolution.selfEffect?.type === "reposition") {
+      newTankX[turn.resolution.selfEffect.playerId] = turn.resolution.selfEffect.toX;
     }
 
     zones = zones
@@ -210,6 +231,7 @@ export function reconstructSteps(game: GameDoc, turns: TurnDoc[]): Step[] {
     const afterTerrain: Terrain = { width: game.terrain.width, heights: newHeights };
     const afterPlayers = game.players.map((p) => ({
       ...p,
+      tankX: newTankX[p.playerId],
       hp: newHp[p.playerId],
       shield: shield[p.playerId] ?? null,
       frozen: frozen[p.playerId] ?? null,
@@ -219,6 +241,7 @@ export function reconstructSteps(game: GameDoc, turns: TurnDoc[]): Step[] {
 
     heights = newHeights;
     hp = newHp;
+    tankX = newTankX;
 
     return { turn, beforeTerrain, afterTerrain, beforePlayers, afterPlayers, beforeHazards, afterHazards: zones };
   });

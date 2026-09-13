@@ -92,7 +92,7 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen, onAn
       // tickAlreadyShown: true — this turn's start-of-turn tick was already previewed live
       // (see the effect below) before the player could even pick a weapon, so it isn't
       // re-animated here; only the shot's own impact plays now.
-      const { projectiles, damagePopups, hazardZoneCreated, selfEffect, statusInflicted, captions, soundCues, airstrikeFlight } =
+      const { projectiles, damagePopups, hazardZoneCreated, selfEffect, statusInflicted, captions, soundCues, airstrikeFlight, selfMove } =
         buildShotAnimation(game.players, getWeapon(weaponId), res.turn.resolution, mySlot, true);
       setActiveShot({
         preImpactTerrain: context.preImpactTerrain,
@@ -112,6 +112,7 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen, onAn
         statusInflicted,
         soundCues,
         airstrikeFlight,
+        selfMove,
         onComplete: async () => {
           // Wait for the refetch to actually land before releasing the animating lock — if we
           // cleared activeShot first, the Fire button's disabled check would briefly fall back

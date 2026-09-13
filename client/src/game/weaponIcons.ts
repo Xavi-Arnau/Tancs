@@ -1,5 +1,6 @@
 import { Plane, Shell } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
+import BalloonIcon from "./icons/BalloonIcon";
 import BasicShellIcon from "./icons/BasicShellIcon";
 import BouncingBettyIcon from "./icons/BouncingBettyIcon";
 import ClusterBombIcon from "./icons/ClusterBombIcon";
@@ -25,6 +26,7 @@ const WEAPON_ICONS: Record<string, IconComponent> = {
   freeze: FreezeIcon,
   acid: VatOfAcidIcon,
   airstrike: Plane,
+  balloon: BalloonIcon,
 };
 
 export function getWeaponIcon(icon: string): IconComponent {

@@ -525,3 +525,69 @@ export function playHeartBloom(): void {
     popNoise.stop(start + durationSec);
   }
 }
+
+/** A soft rising whoosh with a gentle attack — a balloon inflating and lifting off, quieter and
+ * slower than playLaunch()'s sharp "pew" since this is a calm repositioning, not an attack. */
+export function playBalloonLaunch(): void {
+  if (isMuted()) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  const durationSec = 0.5;
+  const osc = ctx.createOscillator();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(150, now);
+  osc.frequency.exponentialRampToValueAtTime(320, now + durationSec);
+  const oscGain = ctx.createGain();
+  oscGain.gain.setValueAtTime(0.0001, now);
+  oscGain.gain.exponentialRampToValueAtTime(0.14, now + durationSec * 0.4);
+  oscGain.gain.exponentialRampToValueAtTime(0.0001, now + durationSec);
+  osc.connect(oscGain);
+  oscGain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + durationSec);
+
+  // A brief breathy noise puff under the tone, for the sense of air filling the envelope.
+  const puffDurationSec = 0.3;
+  const noise = ctx.createBufferSource();
+  noise.buffer = createNoiseBuffer(ctx, puffDurationSec);
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.value = 900;
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.0001, now);
+  noiseGain.gain.exponentialRampToValueAtTime(0.08, now + 0.15);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + puffDurationSec);
+  noise.connect(filter);
+  filter.connect(noiseGain);
+  noiseGain.connect(ctx.destination);
+  noise.start(now);
+  noise.stop(now + puffDurationSec);
+}
+
+/** A soft, low-pitched landing thump — a quieter, duller reuse of playImpact()'s shape,
+ * since a balloon settling back onto the ground isn't meaningfully different from any other
+ * soft landing, just calmer than an explosive impact. */
+export function playBalloonLand(): void {
+  if (isMuted()) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  const durationSec = 0.3;
+  const noise = ctx.createBufferSource();
+  noise.buffer = createNoiseBuffer(ctx, durationSec);
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(350, now);
+  filter.frequency.exponentialRampToValueAtTime(80, now + durationSec);
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.28, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + durationSec);
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(ctx.destination);
+  noise.start(now);
+  noise.stop(now + durationSec);
+}

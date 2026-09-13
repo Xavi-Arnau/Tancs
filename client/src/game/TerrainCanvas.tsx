@@ -14,6 +14,8 @@ import { useEffect, useRef } from "react";
 import type { SoundCue } from "./shotAnimation";
 import {
   playAcidForm,
+  playBalloonLand,
+  playBalloonLaunch,
   playBombImpact,
   playBombRelease,
   playCorrodeHiss,
@@ -51,6 +53,12 @@ function playSoundCue(kind: SoundCue["kind"]): void {
     case "heartBloom":
       playHeartBloom();
       break;
+    case "balloonLaunch":
+      playBalloonLaunch();
+      break;
+    case "balloonLand":
+      playBalloonLand();
+      break;
   }
 }
 
@@ -62,6 +70,9 @@ const CAPTION_DURATION_MS = 1300;
 // A projectile-less shot (the start-of-turn tick preview) has nothing to time its length off
 // of, so it gets this minimum duration instead — long enough for its captions to be readable.
 const MIN_TICK_ONLY_DURATION_TICKS = 70;
+// How high (board units) a Balloon-lifted tank rises above its ground position at the peak of
+// its drift — comfortably clear of typical terrain relief, tuned live like everything else.
+const BALLOON_LIFT_HEIGHT = 130;
 
 export interface ActiveShotProjectile {
   trajectory: Point[];
@@ -103,6 +114,10 @@ export interface ActiveShot {
   selfEffect?: TurnResolution["selfEffect"];
   statusInflicted?: StatusInflictedEntry[];
   soundCues?: SoundCue[];
+  // Cosmetic mid-shot horizontal reposition for a "Balloon"-type self-effect — no other
+  // mechanism in this file animates a tank's X, so renderScene/drawTank must explicitly
+  // consult this (via resolveSelfMove) instead of the player's own fixed pre/post-shot tankX.
+  selfMove?: { playerId: string; fromX: number; toX: number; startTick: number; tickCount: number } | null;
   // Cosmetic full-map plane pass for an "airstrike" weapon — independent of any individual
   // bomb's own trajectory/timing (see drawAirplane's call site in renderScene).
   airstrikeFlight?: { fromLeft: boolean; totalTicks: number; startTick: number } | null;
@@ -305,9 +320,11 @@ function drawTank(
   color: string,
   barrelAngleDeg: number | null,
   elapsedMs: number,
+  tankX: number = player.tankX,
+  lift = 0, // board units added to ground height — a Balloon-lifted tank rides above its actual ground contact point
 ) {
-  const groundY = heightAt(terrain, player.tankX);
-  const [sx, sy] = [player.tankX, toScreenY(groundY)];
+  const groundY = heightAt(terrain, tankX) + lift;
+  const [sx, sy] = [tankX, toScreenY(groundY)];
 
   drawTankBody(ctx, sx, sy, player.tankClass, color, barrelAngleDeg ?? 90, player.slot === 0);
 
@@ -441,6 +458,51 @@ function drawAirplane(ctx: CanvasRenderingContext2D, x: number, y: number, facin
   ctx.restore();
 }
 
+/** A small procedurally-drawn balloon envelope + basket, connected to the lifted tank by two
+ * thin lines — Balloon's shot-level cosmetic overlay while a tank is mid-repositioning, same
+ * procedural style (no image assets) as drawAirplane/drawBomb. `tankTopScreenY` is the screen Y
+ * of the (already-lifted) tank's own top, so the balloon always sits directly above it. */
+function drawBalloon(ctx: CanvasRenderingContext2D, x: number, tankTopScreenY: number, elapsedMs: number) {
+  const sway = Math.sin(elapsedMs * 0.003) * 3;
+  const envelopeRx = 14;
+  const envelopeRy = 18;
+  const basketY = tankTopScreenY - 30;
+  const envelopeCenterX = x + sway;
+  const envelopeCenterY = basketY - envelopeRy - 10;
+
+  ctx.strokeStyle = "#5c4426";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x - 6, tankTopScreenY);
+  ctx.lineTo(envelopeCenterX - 5, basketY + 6);
+  ctx.moveTo(x + 6, tankTopScreenY);
+  ctx.lineTo(envelopeCenterX + 5, basketY + 6);
+  ctx.stroke();
+
+  ctx.fillStyle = "#92795a";
+  ctx.fillRect(envelopeCenterX - 8, basketY - 6, 16, 12);
+
+  ctx.beginPath();
+  ctx.moveTo(envelopeCenterX - 6, basketY - 6);
+  ctx.lineTo(envelopeCenterX - 5, envelopeCenterY + envelopeRy - 3);
+  ctx.moveTo(envelopeCenterX + 6, basketY - 6);
+  ctx.lineTo(envelopeCenterX + 5, envelopeCenterY + envelopeRy - 3);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(envelopeCenterX, envelopeCenterY, envelopeRx, envelopeRy, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "#fbbf24";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(146,105,10,0.5)";
+  ctx.lineWidth = 1;
+  for (const dx of [-7, 0, 7]) {
+    ctx.beginPath();
+    ctx.moveTo(envelopeCenterX + dx * 0.6, envelopeCenterY - envelopeRy);
+    ctx.quadraticCurveTo(envelopeCenterX + dx, envelopeCenterY, envelopeCenterX + dx * 0.6, envelopeCenterY + envelopeRy);
+    ctx.stroke();
+  }
+}
+
 /** A small procedurally-drawn WW2-style "iron bomb" silhouette — an olive-drab capsule body
  * with a rounded nose and a couple of tail-fin strokes at the back — rotated to `angleRad` so
  * the nose always points in the bomb's current direction of travel. Used for Air Strike's
@@ -565,6 +627,36 @@ function playerStatusForShot(
   return { shield, frozen, burning, corroded };
 }
 
+/**
+ * Resolves a player's rendered position for the current frame — normally just their own
+ * `tankX` with no lift, but during an in-flight Balloon `selfMove` for this player,
+ * interpolates the x (smoothstep, for a floaty drift feel) between the pre-flight and landing
+ * position and adds a sinusoidal vertical lift (board units, peaking at the midpoint) instead.
+ * No other mechanism in this file animates a tank's position — falls are vertical-only, at a
+ * fixed x. Used by both the per-player draw loop and the damage-popup loop, which otherwise
+ * would place a landing popup at the tank's pre-flight position while the tank itself has
+ * already visually drifted away.
+ */
+function resolveSelfMove(
+  shot: ActiveShot | null | undefined,
+  player: PlayerState,
+  elapsedTicks: number,
+): { x: number; lift: number } {
+  // Baseline is always the shot's own FROZEN pre-turn snapshot, never the live `players` prop
+  // — same principle as hazardsForShot/preImpactTerrain: a background poll (or, for vs-CPU,
+  // the opponent's reply already being resolved server-side before this shot's own animation
+  // finishes) can otherwise reveal a Balloon reposition before its own turn is ever animated,
+  // only to "snap back" once that turn's own replay correctly starts from the true pre-turn x.
+  const baseX = shot?.preImpactPlayers?.find((p) => p.playerId === player.playerId)?.tankX ?? player.tankX;
+  const move = shot?.selfMove;
+  if (!move || move.playerId !== player.playerId) return { x: baseX, lift: 0 };
+  const progress = Math.max(0, Math.min(1, (elapsedTicks - move.startTick) / move.tickCount));
+  const eased = progress * progress * (3 - 2 * progress);
+  const x = move.fromX + (move.toX - move.fromX) * eased;
+  const lift = Math.sin(Math.PI * progress) * BALLOON_LIFT_HEIGHT;
+  return { x, lift };
+}
+
 export default function TerrainCanvas({ terrain, players, hazards, aim, activeShot }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -618,11 +710,27 @@ export default function TerrainCanvas({ terrain, players, hazards, aim, activeSh
           ? aimRef.current!.angle
           : player.lastAngle;
       const renderPlayer = shot ? { ...player, ...playerStatusForShot(shot, player.playerId, elapsedTicks) } : player;
-      drawTank(ctx, renderTerrain, renderPlayer, PLAYER_COLORS[player.slot], barrelAngle, elapsedMs);
+      const { x: resolvedX, lift } = resolveSelfMove(shot, player, elapsedTicks);
+      drawTank(ctx, renderTerrain, renderPlayer, PLAYER_COLORS[player.slot], barrelAngle, elapsedMs, resolvedX, lift);
+    }
+
+    if (shot?.selfMove) {
+      const move = shot.selfMove;
+      const progress = (elapsedTicks - move.startTick) / move.tickCount;
+      if (progress > 0 && progress < 1) {
+        const player = playersRef.current.find((p) => p.playerId === move.playerId);
+        if (player) {
+          const { x, lift } = resolveSelfMove(shot, player, elapsedTicks);
+          const tankTopY = heightAt(renderTerrain, x) + lift + getTankVisual(player.tankClass).bodyHeight;
+          drawBalloon(ctx, x, toScreenY(tankTopY), elapsedMs);
+        }
+      }
     }
 
     if (shot) {
-      for (const p of shot.projectiles) {
+      // Balloon's degenerate 1-tick pseudo-projectile (from simulateInstant) has no visual of
+      // its own — selfMove/drawBalloon above own this shot's visuals instead.
+      for (const p of shot.projectileStyle === "balloon" ? [] : shot.projectiles) {
         const endTick = p.startTick + p.tickCount;
         if (elapsedTicks < p.startTick) continue; // hasn't launched yet
 
@@ -700,10 +808,11 @@ export default function TerrainCanvas({ terrain, players, hazards, aim, activeSh
         if (msSinceTrigger >= POPUP_DURATION_MS) continue;
         const player = playersRef.current.find((p) => p.slot === popup.slot);
         if (!player) continue;
-        const groundY = heightAt(renderTerrain, player.tankX);
+        const { x: popupX, lift: popupLift } = resolveSelfMove(shot, player, elapsedTicks);
+        const groundY = heightAt(renderTerrain, popupX) + popupLift;
         drawDamagePopup(
           ctx,
-          player.tankX,
+          popupX,
           groundY,
           popup.amount,
           msSinceTrigger / POPUP_DURATION_MS,
@@ -735,6 +844,7 @@ export default function TerrainCanvas({ terrain, players, hazards, aim, activeSh
     }
 
     const airstrikeFlight = activeShot.airstrikeFlight;
+    const selfMove = activeShot.selfMove;
     const computedEndTick = Math.max(
       0,
       ...activeShot.projectiles.map((p) => p.startTick + p.tickCount),
@@ -743,6 +853,7 @@ export default function TerrainCanvas({ terrain, players, hazards, aim, activeSh
       ),
       ...(activeShot.captions ?? []).map((c) => c.triggerTick + CAPTION_DURATION_MS / MS_PER_TICK),
       airstrikeFlight ? airstrikeFlight.startTick + airstrikeFlight.totalTicks : 0,
+      selfMove ? selfMove.startTick + selfMove.tickCount : 0,
     );
     // A tick-only preview has no projectile flight to time its length off of — give it a floor
     // so its captions stay on screen long enough to read.
@@ -758,6 +869,9 @@ export default function TerrainCanvas({ terrain, players, hazards, aim, activeSh
     const releasedIndices = new Set<number>();
     const playedCueIndices = new Set<number>();
     const isBombStyle = activeShot.projectileStyle === "bomb";
+    // Balloon's degenerate 1-tick pseudo-projectile has no meaningful launch/impact of its
+    // own — its own soundCues (balloonLaunch/balloonLand) replace the generic pew/thud instead.
+    const isBalloonStyle = activeShot.projectileStyle === "balloon";
     let engineStarted = false;
 
     function tick(now: number) {
@@ -770,7 +884,7 @@ export default function TerrainCanvas({ terrain, players, hazards, aim, activeSh
         // below gives Air Strike its own opening audio cue instead.
         if (i === 0 && elapsedTicks >= p.startTick && !launchedIndices.has(i)) {
           launchedIndices.add(i);
-          if (!isBombStyle) playLaunch();
+          if (!isBombStyle && !isBalloonStyle) playLaunch();
         }
         // Every bomb gets its own quiet release blip as it leaves the plane, not just the first.
         if (isBombStyle && elapsedTicks >= p.startTick && !releasedIndices.has(i)) {
@@ -781,7 +895,7 @@ export default function TerrainCanvas({ terrain, players, hazards, aim, activeSh
         if (p.impact && elapsedTicks >= endTick && !impactedIndices.has(i)) {
           impactedIndices.add(i);
           if (isBombStyle) playBombImpact();
-          else playImpact();
+          else if (!isBalloonStyle) playImpact();
         }
       });
       activeShot!.soundCues?.forEach((cue, i) => {

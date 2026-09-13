@@ -1,10 +1,13 @@
 import {
   AIRSTRIKE_PLANE_SPEED_BASE,
+  BALLOON_MIN_DRIFT,
+  BALLOON_WIND_DRIFT_SCALE,
   BARREL_LAUNCH_HEIGHT,
   ESCAPE_CARVE_RADIUS,
   ESCAPE_CARVE_TRIGGER_DISTANCE,
   FALL_DAMAGE_PER_UNIT,
   SIM_DT,
+  TANK_SPAWN_EDGE_MARGIN_RATIO,
 } from "./constants.js";
 import { sampleTrajectory, simulateProjectile } from "./physics.js";
 import { getTankClass, maxHpFor } from "./tankClasses.js";
@@ -282,9 +285,10 @@ export function resolveShot(params: ResolveShotParams): ResolveShotResult {
   const statusExpired = tick.statusExpired;
   const statusInflicted: StatusInflictedEntry[] = [...tick.statusInflicted];
 
-  // Self-cast effects (Repair/Shield): applied directly to the caster, independent of aim.
+  // Self-cast effects (Repair/Shield/Balloon): applied directly to the caster, independent of aim.
   let selfEffect: TurnResolution["selfEffect"] = null;
   const caster = players[actingSlot];
+  const tankFalls: TurnResolution["tankFalls"] = [];
   if (weapon.heal) {
     const before = caster.hp;
     caster.hp = Math.min(maxHpFor(caster.tankClass), caster.hp + weapon.heal);
@@ -297,6 +301,34 @@ export function resolveShot(params: ResolveShotParams): ResolveShotResult {
       reduction: weapon.shield.reduction,
       turns: weapon.shield.turns,
     };
+  } else if (weapon.balloon) {
+    // Drift = a guaranteed minimum (so even dead-calm wind is a useful reposition) plus a
+    // wind-scaled bonus (so a strong gust carries it noticeably further). Wind is always a
+    // whole number and 0 is a real, reachable roll — not a float edge case — so it needs an
+    // explicit direction tiebreak; a random one keeps calm-wind turns a gamble rather than a
+    // free, repeatable advance in a fixed direction.
+    const edgeMargin = tick.terrain.width * TANK_SPAWN_EDGE_MARGIN_RATIO;
+    const magnitude = BALLOON_MIN_DRIFT + BALLOON_WIND_DRIFT_SCALE * Math.abs(wind);
+    const direction = wind !== 0 ? Math.sign(wind) : (Math.random() < 0.5 ? -1 : 1);
+    const fromX = caster.tankX;
+    const toX = Math.min(
+      tick.terrain.width - 1 - edgeMargin,
+      Math.max(edgeMargin, fromX + direction * magnitude),
+    );
+    caster.tankX = toX;
+    selfEffect = { playerId: caster.playerId, type: "reposition", fromX, toX };
+
+    // Own fall-damage check, independent of the generic tankFalls loop below (which only
+    // detects terrain collapsing under a STATIONARY tank) — Balloon moves tankX itself and
+    // carves no terrain, so that loop is a guaranteed no-op for this turn; compare the
+    // original x to the new x on the same (Balloon-unmodified) terrain instead.
+    const fromY = heightAt(tick.terrain, fromX);
+    const toY = heightAt(tick.terrain, toX);
+    if (toY < fromY) {
+      const fallDamage = Math.round((fromY - toY) * FALL_DAMAGE_PER_UNIT);
+      if (fallDamage > 0) caster.hp = Math.max(0, caster.hp - fallDamage);
+      tankFalls.push({ playerId: caster.playerId, fromY, toY, fallDamage });
+    }
   }
 
   const preShotTerrain = tick.terrain;
@@ -404,7 +436,6 @@ export function resolveShot(params: ResolveShotParams): ResolveShotResult {
 
   if (hazardZoneCreated) hazards = [...hazards, hazardZoneCreated];
 
-  const tankFalls: TurnResolution["tankFalls"] = [];
   for (const player of players) {
     const fromY = heightAt(preShotTerrain, player.tankX);
     const toY = heightAt(terrain, player.tankX);

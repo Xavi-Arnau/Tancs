@@ -64,3 +64,11 @@ export const AIRSTRIKE_MAX_BOMBS = 12;
 export const AIRSTRIKE_RELEASE_WINDOW_START = 0.2; // bombs only release during the middle
 export const AIRSTRIKE_RELEASE_WINDOW_END = 0.8; // portion of the pass, one at a time
 export const AIRSTRIKE_MIN_RELEASE_GAP_TICKS = 4; // plus a random 0-4 more between each — tight enough that several consecutive bombs can land within one splash radius of each other/a stationary target
+
+// "Balloon" utility item: lifts the caster's own tank and drifts it horizontally with the
+// wind before landing. Drift is "guaranteed minimum + wind bonus" so it's always a useful
+// reposition even in dead-calm wind, but strongly windy turns can carry it noticeably further.
+// Landing reuses TANK_SPAWN_EDGE_MARGIN_RATIO for its edge clamp rather than a separate
+// constant, so "how close to the wall" stays consistent between spawning and repositioning.
+export const BALLOON_MIN_DRIFT = 90; // guaranteed drift, board units (~11% of BOARD_WIDTH)
+export const BALLOON_WIND_DRIFT_SCALE = 3; // extra drift units per unit of |wind|; up to +120 at WIND_MAX (total range 90-210)

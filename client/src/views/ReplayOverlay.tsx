@@ -26,7 +26,7 @@ export default function ReplayOverlay({ game, turns, mySlot, onDone }: Props) {
     if (caughtUp) return;
     const step = steps[index];
     const weapon = getWeapon(step.turn.action.weaponId);
-    const { projectiles, damagePopups, hazardZoneCreated, selfEffect, statusInflicted, captions, soundCues, airstrikeFlight } = buildShotAnimation(
+    const { projectiles, damagePopups, hazardZoneCreated, selfEffect, statusInflicted, captions, soundCues, airstrikeFlight, selfMove } = buildShotAnimation(
       game.players,
       weapon,
       step.turn.resolution,
@@ -49,6 +49,7 @@ export default function ReplayOverlay({ game, turns, mySlot, onDone }: Props) {
       statusInflicted,
       soundCues,
       airstrikeFlight,
+      selfMove,
       onComplete: () => setIndex((i) => i + 1),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
