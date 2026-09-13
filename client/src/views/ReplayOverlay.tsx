@@ -26,9 +26,9 @@ export default function ReplayOverlay({ game, turns, mySlot, onDone }: Props) {
     if (caughtUp) return;
     const step = steps[index];
     const weapon = getWeapon(step.turn.action.weaponId);
-    const { projectiles, damagePopups, hazardZoneCreated, selfEffect, statusInflicted, captions, airstrikeFlight } = buildShotAnimation(
+    const { projectiles, damagePopups, hazardZoneCreated, selfEffect, statusInflicted, captions, soundCues, airstrikeFlight } = buildShotAnimation(
       game.players,
-      weapon.name,
+      weapon,
       step.turn.resolution,
       mySlot,
       false, // never previewed live — the viewer wasn't present for this turn
@@ -47,6 +47,7 @@ export default function ReplayOverlay({ game, turns, mySlot, onDone }: Props) {
       preImpactPlayers: step.beforePlayers,
       selfEffect,
       statusInflicted,
+      soundCues,
       airstrikeFlight,
       onComplete: () => setIndex((i) => i + 1),
     });

@@ -92,8 +92,8 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen, onAn
       // tickAlreadyShown: true — this turn's start-of-turn tick was already previewed live
       // (see the effect below) before the player could even pick a weapon, so it isn't
       // re-animated here; only the shot's own impact plays now.
-      const { projectiles, damagePopups, hazardZoneCreated, selfEffect, statusInflicted, captions, airstrikeFlight } =
-        buildShotAnimation(game.players, getWeapon(weaponId).name, res.turn.resolution, mySlot, true);
+      const { projectiles, damagePopups, hazardZoneCreated, selfEffect, statusInflicted, captions, soundCues, airstrikeFlight } =
+        buildShotAnimation(game.players, getWeapon(weaponId), res.turn.resolution, mySlot, true);
       setActiveShot({
         preImpactTerrain: context.preImpactTerrain,
         projectiles,
@@ -110,11 +110,17 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen, onAn
         preImpactPlayers: context.preImpactPlayers,
         selfEffect,
         statusInflicted,
+        soundCues,
         airstrikeFlight,
-        onComplete: () => {
+        onComplete: async () => {
+          // Wait for the refetch to actually land before releasing the animating lock — if we
+          // cleared activeShot first, the Fire button's disabled check would briefly fall back
+          // to the stale pre-shot `game` prop (still showing it as our turn) until this refetch
+          // resolves, flashing the button enabled for a moment before the screen catches up
+          // (most visible vs CPU, where that "catch up" is a jump straight to ReplayOverlay).
+          await queryClient.invalidateQueries({ queryKey: ["gameState", gameId] });
           setActiveShot(null);
           onAnimatingChange(false);
-          queryClient.invalidateQueries({ queryKey: ["gameState", gameId] });
         },
       });
     },
@@ -144,7 +150,7 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen, onAn
       tick.statusExpired.length > 0;
     if (!hasVisibleEffect) return;
 
-    const { damagePopups, statusInflicted, captions } = buildTickAnimation(game.players, tick, mySlot);
+    const { damagePopups, statusInflicted, captions, soundCues } = buildTickAnimation(game.players, tick, mySlot);
     setActiveShot({
       preImpactTerrain: tick.terrain,
       projectiles: [],
@@ -156,6 +162,7 @@ export default function BattleView({ game, gameId, token, mySlot, markSeen, onAn
       preImpactHazards: tick.hazards,
       preImpactPlayers: tick.players,
       statusInflicted,
+      soundCues,
       onComplete: () => setActiveShot(null),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

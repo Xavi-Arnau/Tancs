@@ -1,4 +1,11 @@
-import { AIRSTRIKE_PLANE_SPEED_BASE, BARREL_LAUNCH_HEIGHT, FALL_DAMAGE_PER_UNIT, SIM_DT } from "./constants.js";
+import {
+  AIRSTRIKE_PLANE_SPEED_BASE,
+  BARREL_LAUNCH_HEIGHT,
+  ESCAPE_CARVE_RADIUS,
+  ESCAPE_CARVE_TRIGGER_DISTANCE,
+  FALL_DAMAGE_PER_UNIT,
+  SIM_DT,
+} from "./constants.js";
 import { sampleTrajectory, simulateProjectile } from "./physics.js";
 import { getTankClass, maxHpFor } from "./tankClasses.js";
 import { carveCrater, heightAt } from "./terrain.js";
@@ -334,6 +341,17 @@ export function resolveShot(params: ResolveShotParams): ResolveShotResult {
       const carved = carveCrater(terrain.heights, segment.impact.x, weapon.splashRadius);
       terrain = { width: terrain.width, heights: carved.heights };
       terrainDiff.push(...carved.diff);
+
+      // Escape carve: this impact landed essentially on top of the shooter's own tank — most
+      // often because they're wedged against steep adjacent terrain and every possible shot
+      // detonates immediately. Guarantee real clearance centered on the tank itself (not just
+      // the impact point), on top of the weapon's own crater, so repeated point-blank hits make
+      // real progress toward freeing them instead of just digging a deeper personal pit.
+      if (Math.abs(segment.impact.x - actingPlayer.tankX) <= ESCAPE_CARVE_TRIGGER_DISTANCE) {
+        const rescue = carveCrater(terrain.heights, actingPlayer.tankX, ESCAPE_CARVE_RADIUS);
+        terrain = { width: terrain.width, heights: rescue.heights };
+        terrainDiff.push(...rescue.diff);
+      }
 
       for (const player of players) {
         const distance = Math.abs(player.tankX - segment.impact.x);

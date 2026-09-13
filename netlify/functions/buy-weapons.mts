@@ -1,4 +1,4 @@
-import { getTankClass, getWeapon, maxHpFor, WIND_MAX } from "@tancs/shared";
+import { getTankClass, getWeapon, MAX_DISTINCT_WEAPONS, maxHpFor, WIND_MAX } from "@tancs/shared";
 import type { Context } from "@netlify/functions";
 import { requireAuth } from "./_lib/auth.js";
 import { resolveCpuTurn } from "./_lib/cpuTurn.js";
@@ -36,6 +36,10 @@ export default async (req: Request, _context: Context): Promise<Response> => {
     const gameId = requireString(body, "gameId");
     const token = requireString(body, "token");
     const purchases = parsePurchases(body.purchases ?? []);
+    const distinctWeaponIds = new Set(purchases.filter((p) => p.quantity > 0).map((p) => p.weaponId));
+    if (distinctWeaponIds.size > MAX_DISTINCT_WEAPONS) {
+      throw new HttpError(400, `Can't select more than ${MAX_DISTINCT_WEAPONS} different weapon types`);
+    }
     const tankClassId = optionalString(body, "tankClassId") ?? "standard";
     // Validate against the real table rather than trusting the client string as-is —
     // getTankClass already falls back to "standard" for an unknown id, but we want an

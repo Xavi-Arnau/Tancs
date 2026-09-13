@@ -1,18 +1,19 @@
 import {
   listPurchasableWeapons,
   listTankClasses,
+  MAX_DISTINCT_WEAPONS,
   type GameDoc,
   type WeaponDefinition,
 } from "@tancs/shared";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { buyWeapons } from "@/api/games";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -76,6 +77,9 @@ export default function BuyPhaseView({ game, gameId, token, mySlot }: Props) {
     0,
   );
   const remaining = me.currency - totalCost;
+  const selectedWeapons = weapons.filter((w) => (quantities[w.id] ?? 0) > 0);
+  const selectedTypeCount = selectedWeapons.length;
+  const typeCapReached = selectedTypeCount >= MAX_DISTINCT_WEAPONS;
 
   const buyMutation = useMutation({
     mutationFn: () =>
@@ -110,12 +114,10 @@ export default function BuyPhaseView({ game, gameId, token, mySlot }: Props) {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-4 py-12">
+    <div className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-4 pt-12">
       <div>
         <h1 className="text-2xl font-bold">Buy phase</h1>
-        <p className="text-muted-foreground">
-          Currency: {me.currency} &middot; Remaining after purchase: {remaining}
-        </p>
+        <p className="text-muted-foreground">Currency: {me.currency}</p>
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -139,60 +141,93 @@ export default function BuyPhaseView({ game, gameId, token, mySlot }: Props) {
         </p>
       </div>
 
-      <div className="flex flex-col gap-3">
-        {weapons.map((weapon) => {
-          const canAffordOneMore = totalCost + weapon.cost <= me.currency;
-          return (
-            <Card key={weapon.id}>
-              <CardHeader className="flex items-center gap-3">
-                <WeaponIcon weapon={weapon} />
-                <div>
-                  <CardTitle className="text-base">{weapon.name}</CardTitle>
-                  <CardDescription>{weapon.description}</CardDescription>
-                </div>
-              </CardHeader>
-              <CardContent className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">
-                  {weapon.cost} currency each &middot; damage {weapon.damage}
-                </span>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    onClick={() => setQty(weapon.id, (quantities[weapon.id] ?? 0) - 1)}
-                  >
-                    -
-                  </Button>
-                  <span className="w-6 text-center">{quantities[weapon.id] ?? 0}</span>
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    disabled={!canAffordOneMore}
-                    onClick={() => setQty(weapon.id, (quantities[weapon.id] ?? 0) + 1)}
-                  >
-                    +
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium text-muted-foreground">Weapons</h2>
+          <span className="text-xs text-muted-foreground">
+            {selectedTypeCount}/{MAX_DISTINCT_WEAPONS} types selected
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-3 pb-28">
+          {weapons.map((weapon) => {
+            const isSelected = (quantities[weapon.id] ?? 0) > 0;
+            const canAffordOneMore = totalCost + weapon.cost <= me.currency;
+            const blockedByCap = !isSelected && typeCapReached;
+            const isReachable = isSelected || (!blockedByCap && canAffordOneMore);
+
+            return (
+              <Card key={weapon.id} className={isReachable ? undefined : "opacity-50"}>
+                <CardHeader className="flex items-center gap-3">
+                  <WeaponIcon weapon={weapon} />
+                  <div>
+                    <CardTitle className="text-base">{weapon.name}</CardTitle>
+                    <CardDescription>{weapon.description}</CardDescription>
+                  </div>
+                </CardHeader>
+                <CardContent className="flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="text-sm text-muted-foreground">
+                      {weapon.cost} currency each &middot; damage {weapon.damage}
+                    </span>
+                    {blockedByCap && (
+                      <span className="text-xs text-muted-foreground">
+                        Loadout full — free up a slot to add this
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="icon-sm"
+                      onClick={() => setQty(weapon.id, (quantities[weapon.id] ?? 0) - 1)}
+                    >
+                      -
+                    </Button>
+                    <span className="w-6 text-center">{quantities[weapon.id] ?? 0}</span>
+                    <Button
+                      variant="outline"
+                      size="icon-sm"
+                      disabled={!canAffordOneMore || blockedByCap}
+                      onClick={() => setQty(weapon.id, (quantities[weapon.id] ?? 0) + 1)}
+                    >
+                      +
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
       </div>
 
-      <Card>
-        <CardFooter className="flex flex-col gap-2 pt-6">
-          <Button
-            className="w-full"
-            disabled={remaining < 0 || buyMutation.isPending}
-            onClick={() => buyMutation.mutate()}
-          >
-            {buyMutation.isPending ? "Confirming..." : "Confirm purchases"}
-          </Button>
-          {buyMutation.isError && (
-            <p className="text-sm text-destructive">{buyMutation.error.message}</p>
-          )}
-        </CardFooter>
-      </Card>
+      <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 border-t bg-background px-4 py-3">
+        {selectedWeapons.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {selectedWeapons.map((w) => (
+              <Badge key={w.id} variant="secondary">
+                {w.name} &times;{quantities[w.id]}
+              </Badge>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center justify-between text-sm">
+          <span className="font-medium">{remaining} currency remaining</span>
+          <span className="text-muted-foreground">
+            {selectedTypeCount}/{MAX_DISTINCT_WEAPONS} types
+          </span>
+        </div>
+        <Button
+          className="w-full"
+          disabled={remaining < 0 || buyMutation.isPending}
+          onClick={() => buyMutation.mutate()}
+        >
+          {buyMutation.isPending ? "Confirming..." : "Confirm purchases"}
+        </Button>
+        {buyMutation.isError && (
+          <p className="text-sm text-destructive">{buyMutation.error.message}</p>
+        )}
+      </div>
     </div>
   );
 }

@@ -11,8 +11,48 @@ import {
   type TurnResolution,
 } from "@tancs/shared";
 import { useEffect, useRef } from "react";
-import { playImpact, playLaunch } from "./sfx";
+import type { SoundCue } from "./shotAnimation";
+import {
+  playAcidForm,
+  playBombImpact,
+  playBombRelease,
+  playCorrodeHiss,
+  playCrackle,
+  playEngineDrone,
+  playHeartBloom,
+  playIgnite,
+  playImpact,
+  playLaunch,
+  playLavaForm,
+  playSizzle,
+} from "./sfx";
 import { drawTankBody, getTankVisual } from "./tankVisuals";
+
+function playSoundCue(kind: SoundCue["kind"]): void {
+  switch (kind) {
+    case "burnTick":
+      playCrackle();
+      break;
+    case "hazardTick":
+      playSizzle();
+      break;
+    case "hazardFormedLava":
+      playLavaForm();
+      break;
+    case "hazardFormedAcid":
+      playAcidForm();
+      break;
+    case "burningInflicted":
+      playIgnite();
+      break;
+    case "corrodedInflicted":
+      playCorrodeHiss();
+      break;
+    case "heartBloom":
+      playHeartBloom();
+      break;
+  }
+}
 
 const PLAYER_COLORS: [string, string] = ["#e5484d", "#3b82f6"]; // slot 0 red, slot 1 blue
 const MS_PER_TICK = 1000 / 60; // real-time-ish playback speed, independent of the physics tick rate
@@ -62,6 +102,7 @@ export interface ActiveShot {
   preImpactPlayers?: PlayerState[];
   selfEffect?: TurnResolution["selfEffect"];
   statusInflicted?: StatusInflictedEntry[];
+  soundCues?: SoundCue[];
   // Cosmetic full-map plane pass for an "airstrike" weapon — independent of any individual
   // bomb's own trajectory/timing (see drawAirplane's call site in renderScene).
   airstrikeFlight?: { fromLeft: boolean; totalTicks: number; startTick: number } | null;
@@ -268,7 +309,7 @@ function drawTank(
   const groundY = heightAt(terrain, player.tankX);
   const [sx, sy] = [player.tankX, toScreenY(groundY)];
 
-  drawTankBody(ctx, sx, sy, player.tankClass, color, barrelAngleDeg ?? 90);
+  drawTankBody(ctx, sx, sy, player.tankClass, color, barrelAngleDeg ?? 90, player.slot === 0);
 
   ctx.fillStyle = "#111";
   ctx.font = "bold 10px system-ui";
@@ -714,6 +755,10 @@ export default function TerrainCanvas({ terrain, players, hazards, aim, activeSh
     // stays crossed.
     const launchedIndices = new Set<number>();
     const impactedIndices = new Set<number>();
+    const releasedIndices = new Set<number>();
+    const playedCueIndices = new Set<number>();
+    const isBombStyle = activeShot.projectileStyle === "bomb";
+    let engineStarted = false;
 
     function tick(now: number) {
       if (!canvas || !ctx) return;
@@ -721,16 +766,35 @@ export default function TerrainCanvas({ terrain, players, hazards, aim, activeSh
       const elapsedMs = now - startTime;
       const elapsedTicks = elapsedMs / MS_PER_TICK;
       activeShot!.projectiles.forEach((p, i) => {
+        // A generic launch "pew" doesn't fit a bomb dropping from a plane — the engine drone
+        // below gives Air Strike its own opening audio cue instead.
         if (i === 0 && elapsedTicks >= p.startTick && !launchedIndices.has(i)) {
           launchedIndices.add(i);
-          playLaunch();
+          if (!isBombStyle) playLaunch();
+        }
+        // Every bomb gets its own quiet release blip as it leaves the plane, not just the first.
+        if (isBombStyle && elapsedTicks >= p.startTick && !releasedIndices.has(i)) {
+          releasedIndices.add(i);
+          playBombRelease();
         }
         const endTick = p.startTick + p.tickCount;
         if (p.impact && elapsedTicks >= endTick && !impactedIndices.has(i)) {
           impactedIndices.add(i);
-          playImpact();
+          if (isBombStyle) playBombImpact();
+          else playImpact();
         }
       });
+      activeShot!.soundCues?.forEach((cue, i) => {
+        if (elapsedTicks >= cue.triggerTick && !playedCueIndices.has(i)) {
+          playedCueIndices.add(i);
+          playSoundCue(cue.kind);
+        }
+      });
+      const airstrikeFlight = activeShot!.airstrikeFlight;
+      if (airstrikeFlight && !engineStarted && elapsedTicks >= airstrikeFlight.startTick) {
+        engineStarted = true;
+        playEngineDrone((airstrikeFlight.totalTicks * MS_PER_TICK) / 1000);
+      }
       renderScene(ctx, canvas, elapsedMs, activeShot);
       if (elapsedMs / MS_PER_TICK < maxEndTick) {
         rafId = requestAnimationFrame(tick);

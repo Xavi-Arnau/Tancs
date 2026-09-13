@@ -14,12 +14,27 @@ export const WIND_MAX = 40; // signed horizontal acceleration, randomized each t
 export const STARTING_HP = 100;
 export const STARTING_CURRENCY = 1000;
 
+// Buy phase: caps how many DISTINCT purchasable weapon types a player can select (quantity of
+// any one already-selected type is still governed only by currency) — keeps BattleView's
+// weapon grid from becoming unwieldy and forces a real loadout choice. Basic Shell doesn't
+// count; it's free/infinite/always available, not part of the purchase list at all.
+export const MAX_DISTINCT_WEAPONS = 4;
+
 export const TANK_SPAWN_EDGE_MARGIN_RATIO = 0.15; // closest a tank can spawn to its own outer edge
 export const TANK_SPAWN_CENTER_MARGIN_RATIO = 0.15; // closest a tank can spawn to the board's center line
 export const TANK_WIDTH = 24; // used for splash-distance and rendering, in board units
 export const BARREL_LAUNCH_HEIGHT = 14; // vertical offset from tank base to barrel tip, in board units
 
 export const FALL_DAMAGE_PER_UNIT = 0; // config-driven fall damage multiplier; 0 disables it for v1
+
+// Guaranteed terrain-only safety net against a self-reinforcing softlock: if a shot detonates
+// this close to the shooter's own tank (e.g. wedged against steep adjacent terrain so every
+// possible shot explodes almost immediately), also carve this much clearance centered on the
+// tank itself, on top of the weapon's own crater — otherwise repeated point-blank hits can dig
+// a self-contained pit that never reaches whatever's actually blocking a firing lane. Terrain
+// only, never damage — carveCrater only ever lowers terrain, never raises it.
+export const ESCAPE_CARVE_TRIGGER_DISTANCE = 40;
+export const ESCAPE_CARVE_RADIUS = 60;
 
 export const MIN_ANGLE = 0;
 export const MAX_ANGLE = 180;
@@ -44,8 +59,8 @@ export const BOUNCE_FRICTION = 0.85; // vx retained per bounce
 // "airstrike" projectile weapons: an unaimed plane pass dropping several bombs one at a time.
 export const AIRSTRIKE_ALTITUDE_RATIO = 0.95; // fraction of BOARD_HEIGHT — comfortably above the tallest possible terrain (0.85) so bombs always get real fall time
 export const AIRSTRIKE_PLANE_SPEED_BASE = 220; // units/sec, before per-shot random variance
-export const AIRSTRIKE_MIN_BOMBS = 5;
-export const AIRSTRIKE_MAX_BOMBS = 8;
+export const AIRSTRIKE_MIN_BOMBS = 9;
+export const AIRSTRIKE_MAX_BOMBS = 12;
 export const AIRSTRIKE_RELEASE_WINDOW_START = 0.2; // bombs only release during the middle
 export const AIRSTRIKE_RELEASE_WINDOW_END = 0.8; // portion of the pass, one at a time
-export const AIRSTRIKE_MIN_RELEASE_GAP_TICKS = 10; // plus a random 0-10 more between each
+export const AIRSTRIKE_MIN_RELEASE_GAP_TICKS = 4; // plus a random 0-4 more between each — tight enough that several consecutive bombs can land within one splash radius of each other/a stationary target

@@ -188,7 +188,7 @@ export const WEAPONS: Record<string, WeaponDefinition> = {
     name: "Air Strike",
     description: "An unaimed strafing run — a plane crosses the whole battlefield, dropping bombs one by one wherever they happen to fall.",
     cost: 100,
-    damage: 18,
+    damage: 10,
     splashRadius: 20,
     projectile: "airstrike",
     defaultAmmo: 0,

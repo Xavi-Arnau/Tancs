@@ -5,8 +5,23 @@ import type {
   StatusInflictedEntry,
   TurnResolution,
   TurnStartTickResult,
+  WeaponDefinition,
 } from "@tancs/shared";
 import type { ActiveShotProjectile, Caption, DamagePopup } from "./TerrainCanvas";
+
+export type SoundCueKind =
+  | "burnTick"
+  | "hazardTick"
+  | "hazardFormedLava"
+  | "hazardFormedAcid"
+  | "burningInflicted"
+  | "corrodedInflicted"
+  | "heartBloom";
+
+export interface SoundCue {
+  triggerTick: number;
+  kind: SoundCueKind;
+}
 
 // If a turn includes hazard-tick damage, give it this many ticks on screen by itself before
 // the fired shot starts flying — otherwise both appear to happen at once, making a lava tick
@@ -22,6 +37,7 @@ export interface ShotAnimation {
   selfEffect: TurnResolution["selfEffect"];
   statusInflicted: StatusInflictedEntry[];
   captions: Caption[];
+  soundCues: SoundCue[];
   // Cosmetic full-map plane pass for an "airstrike" weapon — startTick already includes the
   // same pre-shot offset applied to every projectile's own startTick, so it stays in sync.
   airstrikeFlight: { fromLeft: boolean; totalTicks: number; startTick: number } | null;
@@ -31,6 +47,7 @@ export interface TickAnimation {
   damagePopups: DamagePopup[];
   statusInflicted: StatusInflictedEntry[];
   captions: Caption[];
+  soundCues: SoundCue[];
 }
 
 /** "You"/opponent-name subject for a caption, from the mover's own point of view (mySlot). */
@@ -56,12 +73,14 @@ function statusExpiredCaption(players: PlayerState[], entry: StatusExpiredEntry,
 export function buildTickAnimation(players: PlayerState[], tick: TurnStartTickResult, mySlot: 0 | 1): TickAnimation {
   const popups: DamagePopup[] = [];
   const captions: Caption[] = [];
+  const soundCues: SoundCue[] = [];
 
   for (const entry of tick.hazardDamage) {
     const slot = players.find((p) => p.playerId === entry.playerId)?.slot;
     if (slot !== undefined) popups.push({ slot, amount: entry.amount, triggerTick: 0, source: "hazard" });
     const { label, isMe } = subject(players, entry.playerId, mySlot);
     captions.push({ triggerTick: 0, text: isMe ? `${label} take ${entry.amount} damage from the hazard` : `${label} takes ${entry.amount} damage from the hazard` });
+    soundCues.push({ triggerTick: 0, kind: "hazardTick" });
   }
 
   for (const entry of tick.burnDamage) {
@@ -69,6 +88,7 @@ export function buildTickAnimation(players: PlayerState[], tick: TurnStartTickRe
     if (slot !== undefined) popups.push({ slot, amount: entry.amount, triggerTick: 0, source: "hazard" });
     const { label, isMe } = subject(players, entry.playerId, mySlot);
     captions.push({ triggerTick: 0, text: isMe ? `${label} take ${entry.amount} burn damage` : `${label} takes ${entry.amount} burn damage` });
+    soundCues.push({ triggerTick: 0, kind: "burnTick" });
   }
 
   if (tick.hazardTerrainDiff.length > 0) {
@@ -83,9 +103,10 @@ export function buildTickAnimation(players: PlayerState[], tick: TurnStartTickRe
     if (entry.type !== "corroded") continue; // only corroded is ever inflicted by a tick
     const { label, isMe } = subject(players, entry.playerId, mySlot);
     captions.push({ triggerTick: 0, text: isMe ? `${label}'re corroded! Extra damage taken` : `${label} is corroded! Takes extra damage` });
+    soundCues.push({ triggerTick: 0, kind: "corrodedInflicted" });
   }
 
-  return { damagePopups: popups, statusInflicted: tick.statusInflicted, captions };
+  return { damagePopups: popups, statusInflicted: tick.statusInflicted, captions, soundCues };
 }
 
 /** Builds the projectile list, floating "-N" popups, and narrated captions for a turn's fired
@@ -97,7 +118,7 @@ export function buildTickAnimation(players: PlayerState[], tick: TurnStartTickRe
  * viewer wasn't present for) always passes false, since it never showed the tick live. */
 export function buildShotAnimation(
   players: PlayerState[],
-  weaponName: string,
+  weapon: WeaponDefinition,
   resolution: TurnResolution,
   mySlot: 0 | 1,
   tickAlreadyShown: boolean,
@@ -109,6 +130,7 @@ export function buildShotAnimation(
       : 0;
   const popups: DamagePopup[] = [];
   const captions: Caption[] = [];
+  const soundCues: SoundCue[] = [];
 
   if (!tickAlreadyShown) {
     for (const entry of resolution.hazardDamage) {
@@ -116,6 +138,7 @@ export function buildShotAnimation(
       if (slot !== undefined) popups.push({ slot, amount: entry.amount, triggerTick: 0, source: "hazard" });
       const { label, isMe } = subject(players, entry.playerId, mySlot);
       captions.push({ triggerTick: 0, text: isMe ? `${label} take ${entry.amount} damage from the hazard` : `${label} takes ${entry.amount} damage from the hazard` });
+      soundCues.push({ triggerTick: 0, kind: "hazardTick" });
     }
     // Burn ticks read the same as a hazard tick — passive/DoT damage, not a direct hit — so
     // they share the same popup color and start-of-turn timing.
@@ -124,6 +147,7 @@ export function buildShotAnimation(
       if (slot !== undefined) popups.push({ slot, amount: entry.amount, triggerTick: 0, source: "hazard" });
       const { label, isMe } = subject(players, entry.playerId, mySlot);
       captions.push({ triggerTick: 0, text: isMe ? `${label} take ${entry.amount} burn damage` : `${label} takes ${entry.amount} burn damage` });
+      soundCues.push({ triggerTick: 0, kind: "burnTick" });
     }
     if (resolution.hazardTerrainDiff.length > 0) {
       captions.push({ triggerTick: 0, text: "The ground sinks beneath the hazard" });
@@ -135,10 +159,11 @@ export function buildShotAnimation(
       if (entry.type !== "corroded") continue;
       const { label, isMe } = subject(players, entry.playerId, mySlot);
       captions.push({ triggerTick: 0, text: isMe ? `${label}'re corroded! Extra damage taken` : `${label} is corroded! Takes extra damage` });
+      soundCues.push({ triggerTick: 0, kind: "corrodedInflicted" });
     }
   }
 
-  captions.push({ triggerTick: offset, text: `Firing ${weaponName}` });
+  captions.push({ triggerTick: offset, text: `Firing ${weapon.name}` });
 
   const projectiles: ActiveShotProjectile[] = resolution.projectiles.map((p) => ({
     trajectory: p.trajectory,
@@ -147,6 +172,11 @@ export function buildShotAnimation(
     impact: p.impact,
     terrainDiff: p.terrainDiff,
   }));
+
+  const burningCued = new Set<string>();
+  let hazardZoneCued = false;
+  const isLoveIsPain = weapon.id === "love_is_pain";
+  let heartBloomCued = false;
 
   for (const projectile of resolution.projectiles) {
     const triggerTick = projectile.startTick + offset + projectile.tickCount;
@@ -164,9 +194,24 @@ export function buildShotAnimation(
           ? (isMe ? `${label}'re frozen!` : `${label} is frozen!`)
           : (isMe ? `${label}'re burning!` : `${label} is burning!`);
       captions.push({ triggerTick, text });
+      if (entry.type === "burning" && !burningCued.has(entry.playerId)) {
+        burningCued.add(entry.playerId);
+        soundCues.push({ triggerTick, kind: "burningInflicted" });
+      }
     }
     if (resolution.hazardZoneCreated) {
       captions.push({ triggerTick, text: "A hazard zone forms" });
+      if (!hazardZoneCued) {
+        hazardZoneCued = true;
+        const isAcid = Boolean(resolution.hazardZoneCreated.corrode || resolution.hazardZoneCreated.sinkPerTurn);
+        soundCues.push({ triggerTick, kind: isAcid ? "hazardFormedAcid" : "hazardFormedLava" });
+      }
+    }
+    if (isLoveIsPain && !heartBloomCued && projectile.impact) {
+      // The carrier segment has impact === null (it splits mid-air); the first fragment after
+      // it is where the heart pattern actually blooms into view.
+      heartBloomCued = true;
+      soundCues.push({ triggerTick: projectile.startTick + offset, kind: "heartBloom" });
     }
   }
 
@@ -193,6 +238,7 @@ export function buildShotAnimation(
     selfEffect: resolution.selfEffect,
     statusInflicted: resolution.statusInflicted,
     captions,
+    soundCues,
     airstrikeFlight: resolution.airstrikeFlight
       ? { ...resolution.airstrikeFlight, startTick: offset }
       : null,
